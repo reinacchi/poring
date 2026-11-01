@@ -1,0 +1,21 @@
+error[E0277]: the authenticator has not been provided
+  --> ui/fail/builder_without_authenticator.rs:24:28
+   |
+24 |     let _ = Api::builder().build();
+   |                            ^^^^^ call `.authenticator(...)` on the builder before starting the server
+   |
+   = help: the trait `AuthReady<Tokens>` is not implemented for `Missing`
+   = note: this app declares `auth: Tokens` in `poring_app!`; routes requiring authentication cannot run without it
+help: the trait `AuthReady<T>` is implemented for `Provided<T>`
+  --> $WORKSPACE/crates/poring/src/app.rs
+   |
+   | impl<T> AuthReady<T> for Provided<T> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: required by a bound in `poring::Builder::<A, St, Au>::build`
+  --> $WORKSPACE/crates/poring/src/app.rs
+   |
+   |     pub fn build(self) -> Result<App<A>, StartupError>
+   |            ----- required by a bound in this associated function
+...
+   |         Au: AuthReady<A::Auth>,
+   |             ^^^^^^^^^^^^^^^^^^ required by this bound in `Builder::<A, St, Au>::build`

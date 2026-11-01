@@ -1,0 +1,31 @@
+error[E0080]: evaluation panicked: poring: route `POST /upload` (handler `upload` at $DIR/ui/fail/body_limit_raise.rs) declares body_limit 10485760 bytes, above the inherited limit of 1048576 bytes; limits may only be narrowed
+  --> ui/fail/body_limit_raise.rs:16:1
+   |
+16 | / poring_app! {
+17 | |     Api {
+18 | |         auth: Tokens,
+19 | |         defaults: policy(body_limit = "1MiB"),
+...  |
+22 | | }
+   | |_^ evaluation of `_` failed inside this call
+   |
+note: inside `check_app`
+  --> $WORKSPACE/crates/poring/src/policy/check.rs
+   |
+   | /             describe(Msg::new(), app, r)
+   | |                 .push(" declares body_limit ")
+   | |                 .push(u64_str(rl, &mut b1))
+   | |                 .push(" bytes, above the inherited limit of ")
+   | |                 .push(u64_str(il, &mut b2))
+   | |                 .push(" bytes; limits may only be narrowed")
+   | |                 .fail();
+   | |_______________________^
+note: inside `Msg::fail`
+  --> $RUST/core/src/panic.rs
+   |
+   = note: the failure occurred here
+   |
+  ::: $WORKSPACE/crates/poring/src/policy/check.rs
+   |
+   |             Ok(s) => panic!("{}", s),
+   |                      --------------- in this macro invocation

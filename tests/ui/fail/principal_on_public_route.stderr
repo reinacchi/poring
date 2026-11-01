@@ -1,0 +1,29 @@
+error[E0080]: evaluation panicked: poring: route `GET /me` (handler `me` at $DIR/ui/fail/principal_on_public_route.rs) extracts `Principal<Authenticated>` but is not authenticated; declare `policy(auth = required)` or remove the extractor
+  --> ui/fail/principal_on_public_route.rs:16:1
+   |
+16 | / poring_app! {
+17 | |     Api {
+18 | |         auth: Tokens,
+19 | |         routes: [me],
+20 | |     }
+21 | | }
+   | |_^ evaluation of `_` failed inside this call
+   |
+note: inside `check_app`
+  --> $WORKSPACE/crates/poring/src/policy/check.rs
+   |
+   | /                 describe(Msg::new(), app, r)
+   | |                     .push(" extracts `")
+   | |                     .push(r.desc.extractors[k].ty)
+   | |                     .push("` but is not authenticated; declare `policy(auth = required)` or remove the extractor")
+   | |                     .fail();
+   | |___________________________^
+note: inside `Msg::fail`
+  --> $RUST/core/src/panic.rs
+   |
+   = note: the failure occurred here
+   |
+  ::: $WORKSPACE/crates/poring/src/policy/check.rs
+   |
+   |             Ok(s) => panic!("{}", s),
+   |                      --------------- in this macro invocation

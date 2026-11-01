@@ -1,0 +1,48 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/poring",
+    "crates/poring-macros",
+    "examples",
+    "tests",
+]
+# The example Wasm guest targets wasm32 and is built on its own.
+exclude = ["examples/wasm-guest"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+license = "MIT"
+authors = ["Reina"]
+repository = "https://github.com/reinacchi/poring"
+homepage = "https://github.com/reinacchi/poring"
+
+[workspace.dependencies]
+poring = { path = "crates/poring", version = "0.1.0" }
+poring-macros = { path = "crates/poring-macros", version = "0.1.0" }
+
+tokio = { version = "1.54", default-features = false }
+hyper = { version = "1.12", default-features = false }
+hyper-util = { version = "0.1", default-features = false }
+http = "1"
+http-body = "1"
+http-body-util = "0.1"
+bytes = "1"
+matchit = "0.9.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_html_form = "0.4"
+percent-encoding = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+thiserror = "2"
+pin-project-lite = "0.2"
+arc-swap = "1"
+syn = { version = "2", features = ["full", "extra-traits"] }
+quote = "1"
+proc-macro2 = "1"
+
+[profile.release]
+codegen-units = 16
+lto = "thin"

@@ -1,0 +1,27 @@
+error[E0080]: evaluation panicked: poring: route `DELETE /admin/users/{id}` (handler `delete_user` at $DIR/ui/fail/insecure_admin.rs) is public under a strict `deny_anonymous` policy; declare `public(reason = "...")` to document the exception
+  --> ui/fail/insecure_admin.rs:24:1
+   |
+24 | / poring_app! {
+25 | |     AdminApi {
+26 | |         auth: Tokens,
+27 | |         defaults: policy(deny_anonymous),
+...  |
+30 | | }
+   | |_^ evaluation of `_` failed inside this call
+   |
+note: inside `check_app`
+  --> $WORKSPACE/crates/poring/src/policy/check.rs
+   |
+   | / ...   describe(Msg::new(), app, r)
+   | | ...       .push(" is public under a strict `deny_anonymous` policy; declare `public(reason = \"...\")` to document the exception")
+   | | ...       .fail();
+   | |_________________^
+note: inside `Msg::fail`
+  --> $RUST/core/src/panic.rs
+   |
+   = note: the failure occurred here
+   |
+  ::: $WORKSPACE/crates/poring/src/policy/check.rs
+   |
+   |             Ok(s) => panic!("{}", s),
+   |                      --------------- in this macro invocation

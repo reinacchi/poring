@@ -1,0 +1,21 @@
+error[E0277]: the app state has not been provided
+  --> ui/fail/builder_without_state.rs:19:28
+   |
+19 |     let _ = Api::builder().build();
+   |                            ^^^^^ call `.state(...)` on the builder before starting the server
+   |
+   = help: the trait `StateReady<AppState>` is not implemented for `Missing`
+   = note: this app declares `state: AppState` in `poring_app!`
+help: the trait `StateReady<T>` is implemented for `Provided<T>`
+  --> $WORKSPACE/crates/poring/src/app.rs
+   |
+   | impl<T> StateReady<T> for Provided<T> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: required by a bound in `poring::Builder::<A, St, Au>::build`
+  --> $WORKSPACE/crates/poring/src/app.rs
+   |
+   |     pub fn build(self) -> Result<App<A>, StartupError>
+   |            ----- required by a bound in this associated function
+   |     where
+   |         St: StateReady<A::State>,
+   |             ^^^^^^^^^^^^^^^^^^^^ required by this bound in `Builder::<A, St, Au>::build`

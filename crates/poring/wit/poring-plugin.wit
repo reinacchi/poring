@@ -1,0 +1,62 @@
+/// Poring guest ABI, version 1.
+///
+/// A guest component exports `handler`. The host calls `info` once during preflight (ABI
+/// version, declared capabilities) and `handle` once per request, in a fresh store.
+/// Hosts provide only the imports for capabilities that were explicitly granted; a guest
+/// importing anything else fails to instantiate and is rejected.
+package poring:plugin@0.1.0;
+
+interface handler {
+    /// A header or key/value pair.
+    record header {
+        name: string,
+        value: string,
+    }
+
+    /// The request after host policy enforcement. Credential headers (`authorization`,
+    /// `cookie`, `proxy-authorization`) are removed by the host.
+    record request {
+        method: string,
+        path: string,
+        query: string,
+        headers: list<header>,
+        body: list<u8>,
+        params: list<header>,
+        /// Authenticated subject, if the route required authentication.
+        principal: option<string>,
+    }
+
+    record response {
+        status: u16,
+        headers: list<header>,
+        body: list<u8>,
+    }
+
+    /// A handled error; mapped to an HTTP error response (status clamped to 400..=599).
+    record guest-error {
+        status: u16,
+        message: string,
+    }
+
+    record guest-info {
+        name: string,
+        version: string,
+        /// Must equal the host's supported ABI version (1).
+        abi: u32,
+        /// Capabilities the guest needs; each must be granted by the host.
+        capabilities: list<string>,
+    }
+
+    info: func() -> guest-info;
+    handle: func(req: request) -> result<response, guest-error>;
+}
+
+/// Capability `log`: bounded, rate-limited log lines (host-side tracing).
+interface log {
+    write: func(level: u8, message: string);
+}
+
+world guest {
+    import log;
+    export handler;
+}

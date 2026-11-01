@@ -1,0 +1,5 @@
+error: unknown policy key `authz` (expected auth, public, deny_anonymous, scopes, roles, body_limit, content_type, csrf, timeout, rate_limit)
+ --> ui/fail/unknown_policy_key.rs:1:28
+  |
+1 | #[poring::get("/x", policy(authz = admin))]
+  |                            ^^^^^

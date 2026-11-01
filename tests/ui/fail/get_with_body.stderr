@@ -1,0 +1,5 @@
+error[E0080]: evaluation panicked: poring: GET handler `upload` reads the request body via `Bytes`; GET requests have no defined body semantics
+ --> ui/fail/get_with_body.rs:4:23
+  |
+4 | async fn upload(body: Bytes) -> String {
+  |                       ^^^^^ evaluation of `_` failed here

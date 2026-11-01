@@ -1,0 +1,28 @@
+error[E0080]: evaluation panicked: poring: ambiguous route `GET /users/{id}` (handler `by_id` at $DIR/ui/fail/ambiguous_route.rs) and `/users/{name}` differ only in parameter names; use the same parameter name at the same position
+  --> ui/fail/ambiguous_route.rs:13:1
+   |
+13 | / poring_app! {
+14 | |     Api {
+15 | |         routes: [by_id, by_name],
+16 | |     }
+17 | | }
+   | |_^ evaluation of `_` failed inside this call
+   |
+note: inside `check_app`
+  --> $WORKSPACE/crates/poring/src/policy/check.rs
+   |
+   | /                         describe(Msg::new().push("ambiguous "), app, r)
+   | |                             .push(" and `")
+   | |                             .push(buf_str(&pj))
+   | |                             .push("` differ only in parameter names; use the same parameter name at the same position")
+   | |                             .fail();
+   | |___________________________________^
+note: inside `Msg::fail`
+  --> $RUST/core/src/panic.rs
+   |
+   = note: the failure occurred here
+   |
+  ::: $WORKSPACE/crates/poring/src/policy/check.rs
+   |
+   |             Ok(s) => panic!("{}", s),
+   |                      --------------- in this macro invocation

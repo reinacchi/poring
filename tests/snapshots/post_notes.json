@@ -1,0 +1,399 @@
+{
+  "app": "SecureApp",
+  "meta": [
+    [
+      "authenticator",
+      "TableAuth"
+    ],
+    [
+      "format_version",
+      "1"
+    ],
+    [
+      "poring_version",
+      "0.1.0"
+    ]
+  ],
+  "nodes": [
+    {
+      "id": "receive",
+      "route": null,
+      "kind": "edge",
+      "label": "receive"
+    },
+    {
+      "id": "match",
+      "route": null,
+      "kind": "router",
+      "label": "route match"
+    },
+    {
+      "id": "send",
+      "route": null,
+      "kind": "edge",
+      "label": "send response"
+    },
+    {
+      "id": "post_notes.respond",
+      "route": "post_notes",
+      "kind": "respond",
+      "label": "POST /notes: map response"
+    },
+    {
+      "id": "post_notes.cors",
+      "route": "post_notes",
+      "kind": "security",
+      "label": "CORS origin check"
+    },
+    {
+      "id": "post_notes.deny.403",
+      "route": "post_notes",
+      "kind": "branch",
+      "label": "deny 403"
+    },
+    {
+      "id": "post_notes.auth",
+      "route": "post_notes",
+      "kind": "security",
+      "label": "authenticate (trusted authenticator)"
+    },
+    {
+      "id": "post_notes.deny.401",
+      "route": "post_notes",
+      "kind": "branch",
+      "label": "deny 401"
+    },
+    {
+      "id": "post_notes.authz",
+      "route": "post_notes",
+      "kind": "security",
+      "label": "authorise scopes=[\"notes:write\"]"
+    },
+    {
+      "id": "post_notes.rate_limit",
+      "route": "post_notes",
+      "kind": "security",
+      "label": "rate limit 2/1000ms by principal"
+    },
+    {
+      "id": "post_notes.deny.429",
+      "route": "post_notes",
+      "kind": "branch",
+      "label": "deny 429"
+    },
+    {
+      "id": "post_notes.csrf",
+      "route": "post_notes",
+      "kind": "security",
+      "label": "CSRF check (cookie auth, unsafe method)"
+    },
+    {
+      "id": "post_notes.body_gate",
+      "route": "post_notes",
+      "kind": "security",
+      "label": "body gate <= 1024 bytes, types=[\"application/json\"]"
+    },
+    {
+      "id": "post_notes.deny.413",
+      "route": "post_notes",
+      "kind": "branch",
+      "label": "deny 413"
+    },
+    {
+      "id": "post_notes.deny.415",
+      "route": "post_notes",
+      "kind": "branch",
+      "label": "deny 415"
+    },
+    {
+      "id": "post_notes.short_circuit",
+      "route": "post_notes",
+      "kind": "branch",
+      "label": "early response from hook"
+    },
+    {
+      "id": "post_notes.before.0",
+      "route": "post_notes",
+      "kind": "hook",
+      "label": "before[global] record"
+    },
+    {
+      "id": "post_notes.reject",
+      "route": "post_notes",
+      "kind": "branch",
+      "label": "extractor rejection (4xx)"
+    },
+    {
+      "id": "post_notes.extract.0",
+      "route": "post_notes",
+      "kind": "extract",
+      "label": "extract Principal<Authenticated> (principal)"
+    },
+    {
+      "id": "post_notes.extract.1",
+      "route": "post_notes",
+      "kind": "extract",
+      "label": "extract State<Notes> (state)"
+    },
+    {
+      "id": "post_notes.extract.2",
+      "route": "post_notes",
+      "kind": "extract",
+      "label": "extract Json<NewNote> (json)"
+    },
+    {
+      "id": "post_notes.validate.2",
+      "route": "post_notes",
+      "kind": "validate",
+      "label": "validate Json<NewNote>"
+    },
+    {
+      "id": "post_notes.handler",
+      "route": "post_notes",
+      "kind": "handler",
+      "label": "handler create_note"
+    },
+    {
+      "id": "post_notes.deny.503",
+      "route": "post_notes",
+      "kind": "branch",
+      "label": "deny 503"
+    },
+    {
+      "id": "post_notes.error",
+      "route": "post_notes",
+      "kind": "branch",
+      "label": "handler error -> IntoResponse"
+    }
+  ],
+  "edges": [
+    {
+      "from": "receive",
+      "to": "match",
+      "kind": "next",
+      "label": null
+    },
+    {
+      "from": "match",
+      "to": "post_notes.cors",
+      "kind": "next",
+      "label": "POST /notes"
+    },
+    {
+      "from": "post_notes.cors",
+      "to": "post_notes.deny.403",
+      "kind": "deny",
+      "label": "403 origin not allowed"
+    },
+    {
+      "from": "post_notes.deny.403",
+      "to": "send",
+      "kind": "next",
+      "label": null
+    },
+    {
+      "from": "post_notes.cors",
+      "to": "post_notes.auth",
+      "kind": "next",
+      "label": null
+    },
+    {
+      "from": "post_notes.auth",
+      "to": "post_notes.deny.401",
+      "kind": "deny",
+      "label": "401 unauthenticated"
+    },
+    {
+      "from": "post_notes.deny.401",
+      "to": "send",
+      "kind": "next",
+      "label": null
+    },
+    {
+      "from": "post_notes.auth",
+      "to": "post_notes.authz",
+      "kind": "next",
+      "label": null
+    },
+    {
+      "from": "post_notes.authz",
+      "to": "post_notes.deny.403",
+      "kind": "deny",
+      "label": "403 forbidden"
+    },
+    {
+      "from": "post_notes.authz",
+      "to": "post_notes.rate_limit",
+      "kind": "next",
+      "label": null
+    },
+    {
+      "from": "post_notes.rate_limit",
+      "to": "post_notes.deny.429",
+      "kind": "deny",
+      "label": "429 too many requests"
+    },
+    {
+      "from": "post_notes.deny.429",
+      "to": "send",
+      "kind": "next",
+      "label": null
+    },
+    {
+      "from": "post_notes.rate_limit",
+      "to": "post_notes.csrf",
+      "kind": "next",
+      "label": null
+    },
+    {
+      "from": "post_notes.csrf",
+      "to": "post_notes.deny.403",
+      "kind": "deny",
+      "label": "403 csrf"
+    },
+    {
+      "from": "post_notes.csrf",
+      "to": "post_notes.body_gate",
+      "kind": "next",
+      "label": null
+    },
+    {
+      "from": "post_notes.body_gate",
+      "to": "post_notes.deny.413",
+      "kind": "deny",
+      "label": "413 payload too large"
+    },
+    {
+      "from": "post_notes.deny.413",
+      "to": "send",
+      "kind": "next",
+      "label": null
+    },
+    {
+      "from": "post_notes.body_gate",
+      "to": "post_notes.deny.415",
+      "kind": "deny",
+      "label": "415 unsupported media type"
+    },
+    {
+      "from": "post_notes.deny.415",
+      "to": "send",
+      "kind": "next",
+      "label": null
+    },
+    {
+      "from": "post_notes.body_gate",
+      "to": "post_notes.before.0",
+      "kind": "next",
+      "label": null
+    },
+    {
+      "from": "post_notes.before.0",
+      "to": "post_notes.short_circuit",
+      "kind": "short_circuit",
+      "label": "Err/early return"
+    },
+    {
+      "from": "post_notes.short_circuit",
+      "to": "post_notes.respond",
+      "kind": "next",
+      "label": null
+    },
+    {
+      "from": "post_notes.reject",
+      "to": "post_notes.respond",
+      "kind": "next",
+      "label": null
+    },
+    {
+      "from": "post_notes.before.0",
+      "to": "post_notes.extract.0",
+      "kind": "next",
+      "label": null
+    },
+    {
+      "from": "post_notes.extract.0",
+      "to": "post_notes.reject",
+      "kind": "error",
+      "label": "reject"
+    },
+    {
+      "from": "post_notes.extract.0",
+      "to": "post_notes.extract.1",
+      "kind": "next",
+      "label": null
+    },
+    {
+      "from": "post_notes.extract.1",
+      "to": "post_notes.reject",
+      "kind": "error",
+      "label": "reject"
+    },
+    {
+      "from": "post_notes.extract.1",
+      "to": "post_notes.extract.2",
+      "kind": "next",
+      "label": null
+    },
+    {
+      "from": "post_notes.extract.2",
+      "to": "post_notes.reject",
+      "kind": "error",
+      "label": "reject"
+    },
+    {
+      "from": "post_notes.extract.2",
+      "to": "post_notes.validate.2",
+      "kind": "next",
+      "label": null
+    },
+    {
+      "from": "post_notes.validate.2",
+      "to": "post_notes.reject",
+      "kind": "error",
+      "label": "422 invalid"
+    },
+    {
+      "from": "post_notes.validate.2",
+      "to": "post_notes.handler",
+      "kind": "next",
+      "label": null
+    },
+    {
+      "from": "post_notes.handler",
+      "to": "post_notes.deny.503",
+      "kind": "deny",
+      "label": "503 timeout"
+    },
+    {
+      "from": "post_notes.deny.503",
+      "to": "send",
+      "kind": "next",
+      "label": null
+    },
+    {
+      "from": "post_notes.handler",
+      "to": "post_notes.error",
+      "kind": "error",
+      "label": "Err"
+    },
+    {
+      "from": "post_notes.error",
+      "to": "post_notes.respond",
+      "kind": "next",
+      "label": null
+    },
+    {
+      "from": "post_notes.handler",
+      "to": "post_notes.respond",
+      "kind": "next",
+      "label": null
+    },
+    {
+      "from": "post_notes.respond",
+      "to": "send",
+      "kind": "next",
+      "label": null
+    }
+  ]
+}

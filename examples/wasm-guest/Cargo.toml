@@ -1,0 +1,25 @@
+# A Rust Poring guest. Built separately (not a workspace member) because it targets wasm32.
+#
+#   rustup target add wasm32-unknown-unknown
+#   cargo build --release --target wasm32-unknown-unknown
+#   cargo poring wasm componentise target/wasm32-unknown-unknown/release/poring_echo_guest.wasm -o guest.wasm
+#   cargo poring dev --wasm guest.wasm
+[package]
+name = "poring-echo-guest"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen = { version = "0.63", default-features = false, features = ["macros", "realloc"] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+panic = "abort"
+
+# Standalone (targets wasm32); not part of the host workspace.
+[workspace]

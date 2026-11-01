@@ -1,0 +1,30 @@
+[package]
+name = "poring-tests"
+description = "Integration, security and compile-time tests for poring."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+poring = { workspace = true, features = ["websocket", "multipart", "wasm", "hot-reload", "guest-kit"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+
+[dev-dependencies]
+trybuild = "1.0.122"
+hyper = { workspace = true, features = ["client", "http1"] }
+hyper-util = { workspace = true, features = ["client-legacy", "http1", "tokio"] }
+http-body-util = { workspace = true }
+bytes = { workspace = true }
+proptest = "1.12"
+matchit = { workspace = true }
+percent-encoding = { workspace = true }
+http = { workspace = true }
+tokio-tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tempfile = "3"

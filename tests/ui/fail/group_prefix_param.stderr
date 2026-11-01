@@ -1,0 +1,5 @@
+error: group prefixes must be static (no parameters)
+  --> ui/fail/group_prefix_param.rs:10:24
+   |
+10 |         groups: [group("/tenants/{id}") { routes: [index] }],
+   |                        ^^^^^^^^^^^^^^^

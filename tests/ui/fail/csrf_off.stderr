@@ -1,0 +1,5 @@
+error: CSRF protection cannot be disabled without a documented reason; use `csrf = exempt("why this endpoint is safe")`
+ --> ui/fail/csrf_off.rs:1:43
+  |
+1 | #[poring::post("/transfer", policy(csrf = off))]
+  |                                           ^^^

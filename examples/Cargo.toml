@@ -1,0 +1,53 @@
+[package]
+name = "poring-examples"
+description = "Runnable Poring examples."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+poring = { workspace = true, features = ["websocket", "multipart", "wasm", "hot-reload", "guest-kit"] }
+tokio = { workspace = true, features = ["full"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[[example]]
+name = "hello"
+path = "hello.rs"
+
+[[example]]
+name = "path_query"
+path = "path_query.rs"
+
+[[example]]
+name = "json_crud"
+path = "json_crud.rs"
+
+[[example]]
+name = "websocket_echo"
+path = "websocket_echo.rs"
+
+[[example]]
+name = "plugins"
+path = "plugins.rs"
+
+[[example]]
+name = "secure_admin"
+path = "secure_admin.rs"
+test = true
+
+[[example]]
+name = "tracing_graph"
+path = "tracing_graph.rs"
+
+[[example]]
+name = "wasm_live"
+path = "wasm_live.rs"
+
+[[example]]
+name = "quickstart"
+path = "quickstart.rs"

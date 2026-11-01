@@ -1,0 +1,85 @@
+error[E0277]: `Input` has no Poring contract
+ --> ui/fail/missing_schema.rs:9:1
+  |
+9 | #[poring::post("/users")]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^ missing `PoringSchema`
+  |
+help: the trait `PoringSchema` is not implemented for `Input`
+ --> ui/fail/missing_schema.rs:5:1
+  |
+5 | struct Input {
+  | ^^^^^^^^^^^^
+  = note: add `#[derive(PoringSchema)]` to the type; Poring requires a declared schema for typed request/response bodies so it can validate them and generate OpenAPI
+  = help: the following other types implement trait `PoringSchema`:
+            &'static str
+            ()
+            (A, B)
+            (A, B, C)
+            (A, B, C, D)
+            (A,)
+            BTreeMap<String, T>
+            Box<T>
+          and $N others
+  = note: required for `poring::Json<Input>` to implement `ExtractorMeta`
+  = note: this error originates in the attribute macro `poring::post` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: `Input` has no Poring contract
+  --> ui/fail/missing_schema.rs:16:18
+   |
+16 |         routes: [create],
+   |                  ^^^^^^ missing `PoringSchema`
+   |
+help: the trait `PoringSchema` is not implemented for `Input`
+  --> ui/fail/missing_schema.rs:5:1
+   |
+ 5 | struct Input {
+   | ^^^^^^^^^^^^
+   = note: add `#[derive(PoringSchema)]` to the type; Poring requires a declared schema for typed request/response bodies so it can validate them and generate OpenAPI
+   = help: the following other types implement trait `PoringSchema`:
+             &'static str
+             ()
+             (A, B)
+             (A, B, C)
+             (A, B, C, D)
+             (A,)
+             BTreeMap<String, T>
+             Box<T>
+           and $N others
+   = note: required for `poring::Json<Input>` to implement `FromRequest<()>`
+note: required for `create` to implement `poring::__private::RouteHandler<()>`
+  --> ui/fail/missing_schema.rs:9:1
+   |
+ 9 | #[poring::post("/users")]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound introduced here
+10 | async fn create(Json(i): Json<Input>) -> String {
+   |          ^^^^^^
+   = note: this error originates in the attribute macro `poring::post` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: `Input` has no Poring contract
+  --> ui/fail/missing_schema.rs:10:26
+   |
+10 | async fn create(Json(i): Json<Input>) -> String {
+   |                          ^^^^^^^^^^^ missing `PoringSchema`
+   |
+help: the trait `PoringSchema` is not implemented for `Input`
+  --> ui/fail/missing_schema.rs:5:1
+   |
+ 5 | struct Input {
+   | ^^^^^^^^^^^^
+   = note: add `#[derive(PoringSchema)]` to the type; Poring requires a declared schema for typed request/response bodies so it can validate them and generate OpenAPI
+   = help: the following other types implement trait `PoringSchema`:
+             &'static str
+             ()
+             (A, B)
+             (A, B, C)
+             (A, B, C, D)
+             (A,)
+             BTreeMap<String, T>
+             Box<T>
+           and $N others
+   = note: required for `poring::Json<Input>` to implement `ExtractorMeta`
+note: required by a bound in `poring::__private::extractor`
+  --> $WORKSPACE/crates/poring/src/lib.rs
+   |
+   |     pub const fn extractor<T: ExtractorMeta>(ty: &'static str) -> ExtractorDesc {
+   |                               ^^^^^^^^^^^^^ required by this bound in `extractor`

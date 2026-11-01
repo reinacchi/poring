@@ -1,0 +1,5 @@
+error: a public endpoint cannot require scopes or roles; remove `public` or the scope/role requirement
+ --> ui/fail/public_with_scopes.rs:1:36
+  |
+1 | #[poring::get("/x", policy(public, scopes = ["x:read"]))]
+  |                                    ^^^^^^

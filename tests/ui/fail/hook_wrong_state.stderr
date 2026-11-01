@@ -1,0 +1,22 @@
+error[E0277]: `audit` is not a before-hook for app state `AppState`
+  --> ui/fail/hook_wrong_state.rs:20:18
+   |
+20 |         routes: [index],
+   |                  ^^^^^ unsatisfied trait bound
+   |
+   = note: declare hooks with `#[poring::hook]` on `async fn name(cx: &mut Ctx<'_, AppState>) -> Result<(), E>`
+help: the trait `BeforeHook<AppState>` is not implemented for `audit`
+      but trait `BeforeHook<OtherState>` is implemented for it
+  --> ui/fail/hook_wrong_state.rs:9:1
+   |
+ 9 | #[poring::hook]
+   | ^^^^^^^^^^^^^^^
+   = help: for that trait implementation, expected `OtherState`, found `AppState`
+note: required for `index` to implement `poring::__private::RouteHandler<AppState>`
+  --> ui/fail/hook_wrong_state.rs:12:1
+   |
+12 | #[poring::get("/", before = [audit])]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound introduced here
+13 | async fn index() -> &'static str {
+   |          ^^^^^
+   = note: this error originates in the attribute macro `poring::hook` which comes from the expansion of the attribute macro `poring::get` (in Nightly builds, run with -Z macro-backtrace for more info)

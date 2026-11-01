@@ -1,0 +1,28 @@
+error[E0080]: evaluation panicked: poring: duplicate route `GET /users` (handler `list_a` at $DIR/ui/fail/duplicate_route.rs) is also registered by handler `list_b`
+  --> ui/fail/duplicate_route.rs:13:1
+   |
+13 | / poring_app! {
+14 | |     Api {
+15 | |         routes: [list_a, list_b],
+16 | |     }
+17 | | }
+   | |_^ evaluation of `_` failed inside this call
+   |
+note: inside `check_app`
+  --> $WORKSPACE/crates/poring/src/policy/check.rs
+   |
+   | /                     describe(Msg::new().push("duplicate "), app, r)
+   | |                         .push(" is also registered by handler `")
+   | |                         .push(o.desc.name)
+   | |                         .push("`")
+   | |                         .fail();
+   | |_______________________________^
+note: inside `Msg::fail`
+  --> $RUST/core/src/panic.rs
+   |
+   = note: the failure occurred here
+   |
+  ::: $WORKSPACE/crates/poring/src/policy/check.rs
+   |
+   |             Ok(s) => panic!("{}", s),
+   |                      --------------- in this macro invocation

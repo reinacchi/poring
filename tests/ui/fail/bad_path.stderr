@@ -1,0 +1,5 @@
+error: route path `/users/x{id}`: parameters must span a whole segment (`/{id}`), found `x{id}`
+ --> ui/fail/bad_path.rs:1:15
+  |
+1 | #[poring::get("/users/x{id}")]
+  |               ^^^^^^^^^^^^^^

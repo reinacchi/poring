@@ -1,0 +1,39 @@
+error[E0277]: app state `AppState` does not provide `Metrics`
+  --> ui/fail/plugin_missing_state.rs:24:19
+   |
+24 |         plugins: [MetricsPlugin],
+   |                   ^^^^^^^^^^^^^ `State<Metrics>` is not available in this app
+   |
+   = note: add a field of type `Metrics` to the app's state struct and `#[derive(PoringState)]`, or implement `FromRef<AppState>` for `Metrics`
+help: the trait `PluginDispatch<AppState>` is not implemented for `MetricsPlugin`
+      but trait `PluginDispatch<Metrics>` is implemented for it
+  --> ui/fail/plugin_missing_state.rs:11:1
+   |
+11 | / poring_plugin! {
+12 | |     MetricsPlugin {
+13 | |         prefix: "/metrics",
+14 | |         routes: [hits],
+15 | |     }
+16 | | }
+   | |_^
+   = help: for that trait implementation, expected `Metrics`, found `AppState`
+   = note: required for `poring::extract::State<Metrics>` to implement `FromRequest<AppState>`
+note: required for `hits` to implement `poring::__private::RouteHandler<AppState>`
+  --> ui/fail/plugin_missing_state.rs:6:1
+   |
+ 6 | #[poring::get("/hits")]
+   | ^^^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound introduced here
+ 7 | async fn hits(State(_m): State<Metrics>) -> &'static str {
+   |          ^^^^
+note: required for `MetricsPlugin` to implement `poring::__private::PluginDispatch<AppState>`
+  --> ui/fail/plugin_missing_state.rs:11:1
+   |
+11 | / poring_plugin! {
+12 | |     MetricsPlugin {
+   | |     ^^^^^^^^^^^^^
+13 | |         prefix: "/metrics",
+14 | |         routes: [hits],
+15 | |     }
+16 | | }
+   | |_^
+   = note: this error originates in the macro `poring_plugin` (in Nightly builds, run with -Z macro-backtrace for more info)

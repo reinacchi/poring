@@ -1,0 +1,438 @@
+{
+  "format_version": 1,
+  "app": "SecureApp",
+  "poring_version": "0.1.0",
+  "authenticator": "TableAuth",
+  "cors": {
+    "origins": [
+      "https://app.example"
+    ],
+    "credentials": true,
+    "headers": [],
+    "max_age_secs": 600
+  },
+  "global_hooks": {
+    "before": [
+      {
+        "name": "record",
+        "scope": "global"
+      }
+    ],
+    "after": []
+  },
+  "routes": [
+    {
+      "id": "get_health",
+      "kind": "static",
+      "method": "GET",
+      "path": "/health",
+      "handler": "health",
+      "source": {
+        "file": "tests/src/secure.rs",
+        "line": 102
+      },
+      "group": null,
+      "extractors": [],
+      "hooks": {
+        "before": [
+          {
+            "name": "record",
+            "scope": "global"
+          }
+        ],
+        "after": []
+      },
+      "policy": {
+        "auth": "public",
+        "public_reason": "load balancer liveness probe",
+        "implicit_public": false,
+        "scopes": [],
+        "roles": [],
+        "body_limit": 65536,
+        "content_types": [],
+        "csrf": "not_applicable",
+        "csrf_exempt_reason": null,
+        "timeout_ms": 30000,
+        "rate_limit": null,
+        "provenance": [
+          "deny_anonymous (strict) <- app defaults",
+          "auth=public (exception: load balancer liveness probe) <- route",
+          "body_limit=65536 <- app defaults",
+          "timeout=30000ms <- default"
+        ],
+        "checks": [
+          "cors"
+        ]
+      },
+      "annotations": [],
+      "websocket": false,
+      "meta": []
+    },
+    {
+      "id": "get_notes",
+      "kind": "static",
+      "method": "GET",
+      "path": "/notes",
+      "handler": "list_notes",
+      "source": {
+        "file": "tests/src/secure.rs",
+        "line": 108
+      },
+      "group": null,
+      "extractors": [
+        {
+          "kind": "state",
+          "ty": "State<Notes>",
+          "consumes_body": false,
+          "validates": false
+        }
+      ],
+      "hooks": {
+        "before": [
+          {
+            "name": "record",
+            "scope": "global"
+          }
+        ],
+        "after": []
+      },
+      "policy": {
+        "auth": "required",
+        "public_reason": null,
+        "implicit_public": false,
+        "scopes": [
+          "notes:read"
+        ],
+        "roles": [],
+        "body_limit": 65536,
+        "content_types": [],
+        "csrf": "not_applicable",
+        "csrf_exempt_reason": null,
+        "timeout_ms": 30000,
+        "rate_limit": null,
+        "provenance": [
+          "deny_anonymous (strict) <- app defaults",
+          "scope `notes:read` <- route",
+          "auth=required <- app defaults",
+          "body_limit=65536 <- app defaults",
+          "timeout=30000ms <- default"
+        ],
+        "checks": [
+          "cors",
+          "auth",
+          "authz"
+        ]
+      },
+      "annotations": [],
+      "websocket": false,
+      "meta": []
+    },
+    {
+      "id": "post_notes",
+      "kind": "static",
+      "method": "POST",
+      "path": "/notes",
+      "handler": "create_note",
+      "source": {
+        "file": "tests/src/secure.rs",
+        "line": 117
+      },
+      "group": null,
+      "extractors": [
+        {
+          "kind": "principal",
+          "ty": "Principal<Authenticated>",
+          "consumes_body": false,
+          "validates": false
+        },
+        {
+          "kind": "state",
+          "ty": "State<Notes>",
+          "consumes_body": false,
+          "validates": false
+        },
+        {
+          "kind": "json",
+          "ty": "Json<NewNote>",
+          "consumes_body": true,
+          "validates": true
+        }
+      ],
+      "hooks": {
+        "before": [
+          {
+            "name": "record",
+            "scope": "global"
+          }
+        ],
+        "after": []
+      },
+      "policy": {
+        "auth": "required",
+        "public_reason": null,
+        "implicit_public": false,
+        "scopes": [
+          "notes:write"
+        ],
+        "roles": [],
+        "body_limit": 1024,
+        "content_types": [
+          "application/json"
+        ],
+        "csrf": "enforced",
+        "csrf_exempt_reason": null,
+        "timeout_ms": 30000,
+        "rate_limit": {
+          "requests": 2,
+          "per_ms": 1000,
+          "key": "principal"
+        },
+        "provenance": [
+          "deny_anonymous (strict) <- app defaults",
+          "scope `notes:write` <- route",
+          "auth=required <- app defaults",
+          "body_limit=1024 <- route",
+          "content_types=[\"application/json\"] <- route",
+          "csrf=enforced <- default (cookie-capable authenticator, unsafe method)",
+          "timeout=30000ms <- default",
+          "rate_limit=2/1000ms by principal <- route"
+        ],
+        "checks": [
+          "cors",
+          "auth",
+          "authz",
+          "rate_limit",
+          "csrf",
+          "body_gate"
+        ]
+      },
+      "annotations": [],
+      "websocket": false,
+      "meta": []
+    },
+    {
+      "id": "get_me",
+      "kind": "static",
+      "method": "GET",
+      "path": "/me",
+      "handler": "me",
+      "source": {
+        "file": "tests/src/secure.rs",
+        "line": 129
+      },
+      "group": null,
+      "extractors": [
+        {
+          "kind": "principal",
+          "ty": "Principal<Identity>",
+          "consumes_body": false,
+          "validates": false
+        }
+      ],
+      "hooks": {
+        "before": [
+          {
+            "name": "record",
+            "scope": "global"
+          }
+        ],
+        "after": []
+      },
+      "policy": {
+        "auth": "required",
+        "public_reason": null,
+        "implicit_public": false,
+        "scopes": [],
+        "roles": [],
+        "body_limit": 65536,
+        "content_types": [],
+        "csrf": "not_applicable",
+        "csrf_exempt_reason": null,
+        "timeout_ms": 30000,
+        "rate_limit": {
+          "requests": 3,
+          "per_ms": 1000,
+          "key": "ip"
+        },
+        "provenance": [
+          "deny_anonymous (strict) <- app defaults",
+          "auth=required <- app defaults",
+          "body_limit=65536 <- app defaults",
+          "timeout=30000ms <- default",
+          "rate_limit=3/1000ms by ip <- route"
+        ],
+        "checks": [
+          "cors",
+          "rate_limit",
+          "auth"
+        ]
+      },
+      "annotations": [],
+      "websocket": false,
+      "meta": []
+    },
+    {
+      "id": "get_slow",
+      "kind": "static",
+      "method": "GET",
+      "path": "/slow",
+      "handler": "slow",
+      "source": {
+        "file": "tests/src/secure.rs",
+        "line": 135
+      },
+      "group": null,
+      "extractors": [],
+      "hooks": {
+        "before": [
+          {
+            "name": "record",
+            "scope": "global"
+          }
+        ],
+        "after": []
+      },
+      "policy": {
+        "auth": "required",
+        "public_reason": null,
+        "implicit_public": false,
+        "scopes": [],
+        "roles": [],
+        "body_limit": 65536,
+        "content_types": [],
+        "csrf": "not_applicable",
+        "csrf_exempt_reason": null,
+        "timeout_ms": 50,
+        "rate_limit": null,
+        "provenance": [
+          "deny_anonymous (strict) <- app defaults",
+          "auth=required <- app defaults",
+          "body_limit=65536 <- app defaults",
+          "timeout=50ms <- route"
+        ],
+        "checks": [
+          "cors",
+          "auth"
+        ]
+      },
+      "annotations": [],
+      "websocket": false,
+      "meta": []
+    },
+    {
+      "id": "post_webhook",
+      "kind": "static",
+      "method": "POST",
+      "path": "/webhook",
+      "handler": "webhook",
+      "source": {
+        "file": "tests/src/secure.rs",
+        "line": 142
+      },
+      "group": null,
+      "extractors": [
+        {
+          "kind": "body",
+          "ty": "Bytes",
+          "consumes_body": true,
+          "validates": false
+        }
+      ],
+      "hooks": {
+        "before": [
+          {
+            "name": "record",
+            "scope": "global"
+          }
+        ],
+        "after": []
+      },
+      "policy": {
+        "auth": "public",
+        "public_reason": "verified by HMAC signature",
+        "implicit_public": false,
+        "scopes": [],
+        "roles": [],
+        "body_limit": 256,
+        "content_types": [],
+        "csrf": "exempt",
+        "csrf_exempt_reason": "no cookie auth; HMAC signed",
+        "timeout_ms": 30000,
+        "rate_limit": null,
+        "provenance": [
+          "deny_anonymous (strict) <- app defaults",
+          "auth=public (exception: verified by HMAC signature) <- route",
+          "body_limit=256 <- route",
+          "csrf=exempt (no cookie auth; HMAC signed) <- route",
+          "timeout=30000ms <- default"
+        ],
+        "checks": [
+          "cors",
+          "body_gate"
+        ]
+      },
+      "annotations": [],
+      "websocket": false,
+      "meta": []
+    },
+    {
+      "id": "get_admin_stats",
+      "kind": "static",
+      "method": "GET",
+      "path": "/admin/stats",
+      "handler": "admin_stats",
+      "source": {
+        "file": "tests/src/secure.rs",
+        "line": 148
+      },
+      "group": "/admin",
+      "extractors": [
+        {
+          "kind": "state",
+          "ty": "State<Notes>",
+          "consumes_body": false,
+          "validates": false
+        }
+      ],
+      "hooks": {
+        "before": [
+          {
+            "name": "record",
+            "scope": "global"
+          }
+        ],
+        "after": []
+      },
+      "policy": {
+        "auth": "required",
+        "public_reason": null,
+        "implicit_public": false,
+        "scopes": [],
+        "roles": [
+          "admin"
+        ],
+        "body_limit": 65536,
+        "content_types": [],
+        "csrf": "not_applicable",
+        "csrf_exempt_reason": null,
+        "timeout_ms": 30000,
+        "rate_limit": null,
+        "provenance": [
+          "deny_anonymous (strict) <- app defaults",
+          "role `admin` <- group `/admin`",
+          "auth=required <- app defaults",
+          "body_limit=65536 <- app defaults",
+          "timeout=30000ms <- default"
+        ],
+        "checks": [
+          "cors",
+          "auth",
+          "authz"
+        ]
+      },
+      "annotations": [],
+      "websocket": false,
+      "meta": []
+    }
+  ]
+}

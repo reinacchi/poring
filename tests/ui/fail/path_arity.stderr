@@ -1,0 +1,13 @@
+error: `Path<(u64, u64)>` extracts 2 values, but route `/users/{id}` declares 1 parameter(s): id
+ --> ui/fail/path_arity.rs:4:31
+  |
+4 | async fn user(Path((_a, _b)): Path<(u64, u64)>) -> &'static str {
+  |                               ^^^^
+
+warning: unused import: `poring::prelude::*`
+ --> ui/fail/path_arity.rs:1:5
+  |
+1 | use poring::prelude::*;
+  |     ^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default

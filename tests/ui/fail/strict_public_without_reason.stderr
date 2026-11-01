@@ -1,0 +1,27 @@
+error[E0080]: evaluation panicked: poring: route `GET /debug/vars` (handler `debug_vars` at $DIR/ui/fail/strict_public_without_reason.rs) is public under a strict `deny_anonymous` policy; declare `public(reason = "...")` to document the exception
+  --> ui/fail/strict_public_without_reason.rs:16:1
+   |
+16 | / poring_app! {
+17 | |     Api {
+18 | |         auth: Tokens,
+19 | |         defaults: policy(deny_anonymous),
+...  |
+22 | | }
+   | |_^ evaluation of `_` failed inside this call
+   |
+note: inside `check_app`
+  --> $WORKSPACE/crates/poring/src/policy/check.rs
+   |
+   | / ...   describe(Msg::new(), app, r)
+   | | ...       .push(" is public under a strict `deny_anonymous` policy; declare `public(reason = \"...\")` to document the exception")
+   | | ...       .fail();
+   | |_________________^
+note: inside `Msg::fail`
+  --> $RUST/core/src/panic.rs
+   |
+   = note: the failure occurred here
+   |
+  ::: $WORKSPACE/crates/poring/src/policy/check.rs
+   |
+   |             Ok(s) => panic!("{}", s),
+   |                      --------------- in this macro invocation

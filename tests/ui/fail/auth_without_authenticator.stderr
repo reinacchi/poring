@@ -1,0 +1,28 @@
+error[E0080]: evaluation panicked: poring: route `GET /admin` (handler `admin` at $DIR/ui/fail/auth_without_authenticator.rs) requires authentication, but app `Api` declares no authenticator; add `auth: YourAuthenticator` to poring_app!
+  --> ui/fail/auth_without_authenticator.rs:8:1
+   |
+ 8 | / poring_app! {
+ 9 | |     Api {
+10 | |         routes: [admin],
+11 | |     }
+12 | | }
+   | |_^ evaluation of `_` failed inside this call
+   |
+note: inside `check_app`
+  --> $WORKSPACE/crates/poring/src/policy/check.rs
+   |
+   | /             describe(Msg::new(), app, r)
+   | |                 .push(" requires authentication, but app `")
+   | |                 .push(app.name)
+   | |                 .push("` declares no authenticator; add `auth: YourAuthenticator` to poring_app!")
+   | |                 .fail();
+   | |_______________________^
+note: inside `Msg::fail`
+  --> $RUST/core/src/panic.rs
+   |
+   = note: the failure occurred here
+   |
+  ::: $WORKSPACE/crates/poring/src/policy/check.rs
+   |
+   |             Ok(s) => panic!("{}", s),
+   |                      --------------- in this macro invocation

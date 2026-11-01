@@ -1,0 +1,23 @@
+error[E0277]: app state `AppState` does not provide `UserStore`
+  --> ui/fail/missing_state.rs:17:18
+   |
+17 |         routes: [users],
+   |                  ^^^^^ `State<UserStore>` is not available in this app
+   |
+   = note: add a field of type `UserStore` to the app's state struct and `#[derive(PoringState)]`, or implement `FromRef<AppState>` for `UserStore`
+help: the trait `RouteHandler<AppState>` is not implemented for `users`
+      but trait `RouteHandler<UserStore>` is implemented for it
+  --> ui/fail/missing_state.rs:9:1
+   |
+ 9 | #[poring::get("/users")]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: for that trait implementation, expected `UserStore`, found `AppState`
+   = note: required for `poring::extract::State<UserStore>` to implement `FromRequest<AppState>`
+note: required for `users` to implement `poring::__private::RouteHandler<AppState>`
+  --> ui/fail/missing_state.rs:9:1
+   |
+ 9 | #[poring::get("/users")]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound introduced here
+10 | async fn users(State(_s): State<UserStore>) -> &'static str {
+   |          ^^^^^
+   = note: this error originates in the attribute macro `poring::get` (in Nightly builds, run with -Z macro-backtrace for more info)

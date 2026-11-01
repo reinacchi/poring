@@ -1,0 +1,5 @@
+error[E0080]: evaluation panicked: poring: argument 1 (`Json<Input>`) of handler `create` reads the request body; only the last argument may read the body
+  --> ui/fail/body_not_last.rs:10:27
+   |
+10 | async fn create(Json(_i): Json<Input>, Path(_id): Path<u64>) -> &'static str {
+   |                           ^^^^ evaluation of `_` failed here
