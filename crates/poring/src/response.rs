@@ -5,6 +5,8 @@ use http::header::{CONTENT_TYPE, HeaderName, HeaderValue, LOCATION};
 use http::{HeaderMap, StatusCode};
 
 use crate::body::Body;
+use crate::descriptor::ResponseDoc;
+use crate::schema::SchemaRegistry;
 
 /// The response type produced by every handler.
 pub type Response = http::Response<Body>;
@@ -18,6 +20,32 @@ pub type Response = http::Response<Body>;
 pub trait IntoResponse {
     /// Performs the conversion.
     fn into_response(self) -> Response;
+
+    /// Responses documented for fluent routes (OpenAPI). Undocumented by default.
+    #[doc(hidden)]
+    fn __poring_describe(reg: &mut SchemaRegistry) -> Vec<ResponseDoc>
+    where
+        Self: Sized,
+    {
+        let _ = reg;
+        Vec::new()
+    }
+}
+
+fn described<T: describe::DescribeResponse>(reg: &mut SchemaRegistry) -> Vec<ResponseDoc> {
+    T::describe(reg)
+}
+
+/// Marks a documented `200` as status-dependent (the status is chosen at runtime).
+fn runtime_status(docs: Vec<ResponseDoc>) -> Vec<ResponseDoc> {
+    docs.into_iter()
+        .map(|mut d| {
+            if d.status == 200 {
+                d.status = 0;
+            }
+            d
+        })
+        .collect()
 }
 
 pub(crate) static TEXT_PLAIN: HeaderValue = HeaderValue::from_static("text/plain; charset=utf-8");
@@ -47,17 +75,29 @@ impl IntoResponse for () {
     fn into_response(self) -> Response {
         http::Response::new(Body::empty())
     }
+
+    fn __poring_describe(reg: &mut SchemaRegistry) -> Vec<ResponseDoc> {
+        described::<()>(reg)
+    }
 }
 
 impl IntoResponse for &'static str {
     fn into_response(self) -> Response {
         with_type(Body::from(self), &TEXT_PLAIN)
     }
+
+    fn __poring_describe(reg: &mut SchemaRegistry) -> Vec<ResponseDoc> {
+        described::<&'static str>(reg)
+    }
 }
 
 impl IntoResponse for String {
     fn into_response(self) -> Response {
         with_type(Body::from(self), &TEXT_PLAIN)
+    }
+
+    fn __poring_describe(reg: &mut SchemaRegistry) -> Vec<ResponseDoc> {
+        described::<String>(reg)
     }
 }
 
@@ -68,11 +108,19 @@ impl IntoResponse for std::borrow::Cow<'static, str> {
             std::borrow::Cow::Owned(s) => s.into_response(),
         }
     }
+
+    fn __poring_describe(reg: &mut SchemaRegistry) -> Vec<ResponseDoc> {
+        described::<String>(reg)
+    }
 }
 
 impl IntoResponse for Bytes {
     fn into_response(self) -> Response {
         with_type(Body::from(self), &OCTET_STREAM)
+    }
+
+    fn __poring_describe(reg: &mut SchemaRegistry) -> Vec<ResponseDoc> {
+        described::<Bytes>(reg)
     }
 }
 
@@ -80,11 +128,19 @@ impl IntoResponse for Vec<u8> {
     fn into_response(self) -> Response {
         with_type(Body::from(self), &OCTET_STREAM)
     }
+
+    fn __poring_describe(reg: &mut SchemaRegistry) -> Vec<ResponseDoc> {
+        described::<Bytes>(reg)
+    }
 }
 
 impl IntoResponse for &'static [u8] {
     fn into_response(self) -> Response {
         with_type(Body::from(self), &OCTET_STREAM)
+    }
+
+    fn __poring_describe(reg: &mut SchemaRegistry) -> Vec<ResponseDoc> {
+        described::<Bytes>(reg)
     }
 }
 
@@ -93,6 +149,10 @@ impl IntoResponse for StatusCode {
         let mut r = http::Response::new(Body::empty());
         *r.status_mut() = self;
         r
+    }
+
+    fn __poring_describe(reg: &mut SchemaRegistry) -> Vec<ResponseDoc> {
+        described::<StatusCode>(reg)
     }
 }
 
@@ -103,6 +163,12 @@ impl<T: IntoResponse, E: IntoResponse> IntoResponse for Result<T, E> {
             Err(e) => e.into_response(),
         }
     }
+
+    fn __poring_describe(reg: &mut SchemaRegistry) -> Vec<ResponseDoc> {
+        let mut v = T::__poring_describe(reg);
+        v.extend(E::__poring_describe(reg));
+        v
+    }
 }
 
 impl<T: IntoResponse> IntoResponse for (StatusCode, T) {
@@ -111,6 +177,10 @@ impl<T: IntoResponse> IntoResponse for (StatusCode, T) {
         *r.status_mut() = self.0;
         r
     }
+
+    fn __poring_describe(reg: &mut SchemaRegistry) -> Vec<ResponseDoc> {
+        runtime_status(T::__poring_describe(reg))
+    }
 }
 
 impl<T: IntoResponse> IntoResponse for (HeaderMap, T) {
@@ -118,6 +188,10 @@ impl<T: IntoResponse> IntoResponse for (HeaderMap, T) {
         let mut r = self.1.into_response();
         r.headers_mut().extend(self.0);
         r
+    }
+
+    fn __poring_describe(reg: &mut SchemaRegistry) -> Vec<ResponseDoc> {
+        T::__poring_describe(reg)
     }
 }
 
@@ -128,6 +202,10 @@ impl<T: IntoResponse> IntoResponse for (StatusCode, HeaderMap, T) {
         r.headers_mut().extend(self.1);
         r
     }
+
+    fn __poring_describe(reg: &mut SchemaRegistry) -> Vec<ResponseDoc> {
+        runtime_status(T::__poring_describe(reg))
+    }
 }
 
 impl<T: IntoResponse, const N: usize> IntoResponse for ([(HeaderName, HeaderValue); N], T) {
@@ -137,6 +215,10 @@ impl<T: IntoResponse, const N: usize> IntoResponse for ([(HeaderName, HeaderValu
             r.headers_mut().insert(k, v);
         }
         r
+    }
+
+    fn __poring_describe(reg: &mut SchemaRegistry) -> Vec<ResponseDoc> {
+        T::__poring_describe(reg)
     }
 }
 
@@ -149,6 +231,10 @@ impl<T: IntoResponse, const N: usize> IntoResponse for (StatusCode, [(HeaderName
         }
         r
     }
+
+    fn __poring_describe(reg: &mut SchemaRegistry) -> Vec<ResponseDoc> {
+        runtime_status(T::__poring_describe(reg))
+    }
 }
 
 /// An HTML response.
@@ -158,6 +244,10 @@ pub struct Html<T>(pub T);
 impl<T: Into<Body>> IntoResponse for Html<T> {
     fn into_response(self) -> Response {
         with_type(self.0.into(), &TEXT_HTML)
+    }
+
+    fn __poring_describe(reg: &mut SchemaRegistry) -> Vec<ResponseDoc> {
+        described::<Html<()>>(reg)
     }
 }
 
@@ -194,6 +284,10 @@ impl IntoResponse for Redirect {
         r.headers_mut().insert(LOCATION, self.location);
         r
     }
+
+    fn __poring_describe(reg: &mut SchemaRegistry) -> Vec<ResponseDoc> {
+        described::<Redirect>(reg)
+    }
 }
 
 /// A JSON request extractor / response.
@@ -215,6 +309,12 @@ impl<T: serde::Serialize> IntoResponse for Json<T> {
                 crate::error::ApiError::internal_message("response serialisation failed").into_response()
             }
         }
+    }
+
+    fn __poring_describe(reg: &mut SchemaRegistry) -> Vec<ResponseDoc> {
+        let _ = reg;
+        // The body type is only known to be `Serialize` here, so its schema is not documented.
+        vec![ResponseDoc { status: 200, content_type: Some("application/json"), schema: None }]
     }
 }
 

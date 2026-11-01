@@ -51,3 +51,15 @@ path = "wasm_live.rs"
 [[example]]
 name = "quickstart"
 path = "quickstart.rs"
+
+[[example]]
+name = "fluent_json"
+path = "fluent_json.rs"
+
+[[example]]
+name = "attribute_macros"
+path = "attribute_macros.rs"
+
+[[example]]
+name = "fluent_api"
+path = "fluent_api.rs"

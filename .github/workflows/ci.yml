@@ -11,8 +11,10 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with: { components: "rustfmt, clippy" }
+      # Pinned to the `rust-version` toolchain: the trybuild `.stderr` snapshots in
+      # tests/ui record this compiler's exact diagnostics.
+      - uses: dtolnay/rust-toolchain@master
+        with: { toolchain: "1.97.0", components: "rustfmt, clippy" }
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
       - run: npm install -g typescript@7
@@ -61,4 +63,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: ./scripts/wasm_demo.sh
+      - run: bash scripts/wasm_demo.sh

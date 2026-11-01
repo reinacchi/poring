@@ -1,25 +1,33 @@
 //! # Poring
 //!
-//! Poring is an ergonomic Rust web framework built on Tokio and Hyper:
+//! Poring is an ergonomic Rust web framework built on Tokio and Hyper.
 //!
-//! * **Typed, macro-generated routes.** `#[poring::get("/users/{id}")]` turns an `async fn`
-//!   into a route descriptor plus statically dispatched glue. `poring_app!` assembles the
-//!   whole app and runs whole-app checks during constant evaluation.
-//! * **Compile-time-assisted security policy.** A typed `policy(..)` DSL with deterministic
-//!   merging; inconsistent declarations fail to compile, and every request is still
-//!   enforced at runtime (authentication, authorisation, CSRF, CORS, rate limits, body
-//!   limits, timeouts).
-//! * **Trace-flow graphs.** A deterministic static lifecycle/security graph (Mermaid, DOT,
-//!   JSON) and runtime traces keyed by the same node IDs.
-//! * **Wasm hot reload** (the `wasm` and `hot-reload` features): sandboxed guest components served
-//!   behind the same policy pipeline and swapped atomically while the host keeps running.
+//! Routes are declared in one of two ways, served by the same router, extractors and
+//! security pipeline:
+//!
+//! * **Fluent API.** [`Poring`] chains routes, groups, policies and hooks without
+//!   attributes. Handler and extractor types are checked by the compiler. Route conflicts,
+//!   path syntax and policy rules are checked by [`Poring::build`] before the server binds.
+//! * **Attribute macros.** `#[poring::get("/users/{id}")]` and `poring_app!` declare the
+//!   same things, and `poring_app!` checks the whole app during compilation.
+//!
+//! ```no_run
+//! use poring::prelude::*;
+//!
+//! fn main() -> Result<(), poring::StartupError> {
+//!     Poring::new()
+//!         .get("/", || async { "Hello, Poring!" })
+//!         .get("/hello/{name}", |Path(name): Path<String>| async move { format!("Hello, {name}!") })
+//!         .run("127.0.0.1:3000")
+//! }
+//! ```
 //!
 //! ```no_run
 //! use poring::prelude::*;
 //!
 //! #[poring::get("/hello/{name}")]
 //! async fn hello(Path(name): Path<String>) -> String {
-//!     format!("hello, {name}")
+//!     format!("Hello, {name}!")
 //! }
 //!
 //! poring_app! {
@@ -33,6 +41,12 @@
 //!     Api::builder().listen("127.0.0.1:3000").await
 //! }
 //! ```
+//!
+//! Every request is enforced at runtime (authentication, authorisation, CSRF, CORS, rate
+//! limits, body limits and timeouts), whichever API declared the route. Static flow
+//! graphs (Mermaid, DOT, JSON) and runtime traces share node IDs. With the `wasm` and
+//! `hot-reload` features, sandboxed WebAssembly guests can be served behind the same
+//! pipeline and swapped while the host keeps running.
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
@@ -45,6 +59,8 @@ pub mod dynamic;
 pub mod error;
 pub mod extract;
 pub mod flow;
+pub mod fluent;
+pub mod handler;
 #[cfg(feature = "openapi")]
 pub mod openapi;
 pub mod policy;
@@ -63,6 +79,8 @@ pub use app::{
 pub use body::{Body, ReqBody};
 pub use ctx::{Ctx, RequestId};
 pub use error::{ApiError, FrameworkError, ValidationIssue};
+pub use fluent::{FluentApp, Poring};
+pub use handler::{Group, Handler, HookOutcome};
 #[cfg(feature = "json")]
 pub use response::Json;
 pub use response::{Html, IntoResponse, Redirect, Response};
@@ -77,11 +95,13 @@ pub use http::{self, HeaderMap, HeaderValue, Method, StatusCode, Uri};
 
 /// Everyday imports.
 pub mod prelude {
+    pub use crate::descriptor::Method as RouteMethod;
     pub use crate::extract::{
         Authenticated, Cookie, Cookies, Extension, Form, FromIdentity, FromRef, FromRequest, Header, Path, Principal,
         Query, State,
     };
-    pub use crate::policy::{AuthError, AuthRequest, Authenticator, Credential, Identity};
+    pub use crate::fluent::Poring;
+    pub use crate::policy::{AuthError, AuthRequest, Authenticator, Cors, Credential, Identity, Policy};
     #[cfg(feature = "json")]
     pub use crate::response::Json;
     pub use crate::response::{Html, IntoResponse, Redirect, Response};
@@ -223,34 +243,7 @@ pub mod __private {
         fn after<'a, 'c>(cx: &'c Ctx<'a, S>, res: &'c mut Response) -> impl Future<Output = ()> + Send + 'c;
     }
 
-    /// Converts a before-hook return value into a pipeline outcome.
-    ///
-    /// `clippy::result_large_err` is allowed deliberately: the `Err` side carries the
-    /// early `Response` by value (a guard may return a response directly), and
-    /// boxing would add an allocation to every short-circuit for no measured benefit.
-    #[allow(clippy::result_large_err)]
-    pub trait HookOutcome {
-        /// Conversion.
-        fn into_outcome(self) -> Result<(), Response>;
-    }
-    impl HookOutcome for () {
-        fn into_outcome(self) -> Result<(), Response> {
-            Ok(())
-        }
-    }
-    impl<E: IntoResponse> HookOutcome for Result<(), E> {
-        fn into_outcome(self) -> Result<(), Response> {
-            self.map_err(IntoResponse::into_response)
-        }
-    }
-    impl HookOutcome for Option<Response> {
-        fn into_outcome(self) -> Result<(), Response> {
-            match self {
-                Some(r) => Err(r),
-                None => Ok(()),
-            }
-        }
-    }
+    pub use crate::handler::HookOutcome;
 
     /// Builds an [`ExtractorDesc`] from an extractor type in const context.
     pub const fn extractor<T: ExtractorMeta>(ty: &'static str) -> ExtractorDesc {

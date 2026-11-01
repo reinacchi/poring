@@ -6,7 +6,7 @@ use crate::contract::{PolicyView, RateLimitView};
 
 use crate::descriptor::Method;
 use crate::policy::{
-    AuthSpec, CsrfSpec, DEFAULT_BODY_LIMIT, DEFAULT_TIMEOUT_MS, PolicySpec, RateLimitSpec, TimeoutSpec,
+    DEFAULT_BODY_LIMIT, DEFAULT_TIMEOUT_MS, Level, LevelAuth, LevelCsrf, PolicySpec, RateLimitSpec, TimeoutSpec,
 };
 
 /// Effective CSRF mode of a route.
@@ -136,15 +136,27 @@ pub fn resolve(
     reads_body: bool,
     uses_principal: bool,
 ) -> Result<EffectivePolicy, String> {
+    let levels: Vec<(&str, Level<'static>)> = levels.iter().map(|(n, p)| (*n, p.level())).collect();
+    resolve_levels(app, &levels, method, reads_body, uses_principal)
+}
+
+/// [`resolve()`] over borrowed levels (`const` macro declarations or owned fluent policies).
+pub(crate) fn resolve_levels(
+    app: AppContext,
+    levels: &[(&str, Level<'_>)],
+    method: Method,
+    reads_body: bool,
+    uses_principal: bool,
+) -> Result<EffectivePolicy, String> {
     let mut prov = Vec::new();
-    let mut auth = AuthSpec::Inherit;
+    let mut auth = LevelAuth::Inherit;
     let mut auth_src = "default";
     let mut strict = false;
     let mut scopes: Vec<String> = Vec::new();
     let mut roles: Vec<String> = Vec::new();
     let mut body_limit: Option<(u64, &str)> = None;
     let mut content_types: Option<(&[&str], &str)> = None;
-    let mut csrf = CsrfSpec::Inherit;
+    let mut csrf = LevelCsrf::Inherit;
     let mut csrf_src = "default";
     let mut timeout = TimeoutSpec::Inherit;
     let mut timeout_src = "default";
@@ -157,7 +169,7 @@ pub fn resolve(
         if is_route {
             inherited_reqs = !scopes.is_empty() || !roles.is_empty();
         }
-        if p.auth != AuthSpec::Inherit {
+        if p.auth != LevelAuth::Inherit {
             auth = p.auth;
             auth_src = name;
         }
@@ -165,13 +177,13 @@ pub fn resolve(
             strict = true;
             prov.push(format!("deny_anonymous (strict) <- {name}"));
         }
-        for s in p.scopes {
+        for s in &p.scopes {
             if !scopes.iter().any(|x| x == s) {
                 scopes.push((*s).to_owned());
                 prov.push(format!("scope `{s}` <- {name}"));
             }
         }
-        for r in p.roles {
+        for r in &p.roles {
             if !roles.iter().any(|x| x == r) {
                 roles.push((*r).to_owned());
                 prov.push(format!("role `{r}` <- {name}"));
@@ -188,9 +200,9 @@ pub fn resolve(
             body_limit = Some((l, name));
         }
         if !p.content_types.is_empty() {
-            content_types = Some((p.content_types, name));
+            content_types = Some((p.content_types.as_slice(), name));
         }
-        if p.csrf != CsrfSpec::Inherit {
+        if p.csrf != LevelCsrf::Inherit {
             csrf = p.csrf;
             csrf_src = name;
         }
@@ -204,7 +216,7 @@ pub fn resolve(
     }
 
     let (auth_required, public_reason, implicit_public) = match auth {
-        AuthSpec::Inherit => {
+        LevelAuth::Inherit => {
             if app.has_authenticator {
                 prov.push("auth=required <- default (app declares an authenticator)".to_owned());
                 (true, None, false)
@@ -213,11 +225,11 @@ pub fn resolve(
                 (false, None, true)
             }
         }
-        AuthSpec::Required => {
+        LevelAuth::Required => {
             prov.push(format!("auth=required <- {auth_src}"));
             (true, None, false)
         }
-        AuthSpec::Public { reason } => {
+        LevelAuth::Public(reason) => {
             if reason.is_empty() {
                 prov.push(format!("auth=public <- {auth_src}"));
                 (false, None, false)
@@ -237,7 +249,7 @@ pub fn resolve(
     if !auth_required && strict && public_reason.is_none() {
         return Err("is public under a strict deny_anonymous policy without a reason".into());
     }
-    let route_public = matches!(levels.last().map(|l| l.1.auth), Some(AuthSpec::Public { .. }));
+    let route_public = matches!(levels.last().map(|l| l.1.auth), Some(LevelAuth::Public(_)));
     if route_public && inherited_reqs && public_reason.is_none() {
         return Err("is public and would drop inherited scope/role requirements".into());
     }
@@ -265,7 +277,7 @@ pub fn resolve(
         None => Vec::new(),
     };
     let csrf_mode = match csrf {
-        CsrfSpec::Exempt { reason } => {
+        LevelCsrf::Exempt(reason) => {
             prov.push(format!("csrf=exempt ({reason}) <- {csrf_src}"));
             CsrfMode::Exempt(reason.to_owned())
         }
@@ -314,6 +326,7 @@ pub fn resolve(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::policy::AuthSpec;
 
     const APP_AUTH: AppContext = AppContext { has_authenticator: true, auth_uses_cookies: true, cors: false };
 

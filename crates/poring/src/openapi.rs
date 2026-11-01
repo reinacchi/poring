@@ -12,8 +12,9 @@ use std::fmt::Write as _;
 
 use serde_json::{Map, Value, json};
 
-use crate::app::{AppSpec, StartupError, static_manifest};
-use crate::descriptor::{ExtractorKind, RouteDescriptor};
+use crate::app::{AppSpec, RouteDoc, StartupError, static_contract};
+use crate::contract::Manifest;
+use crate::descriptor::ExtractorKind;
 use crate::schema::SchemaRegistry;
 
 /// Document metadata.
@@ -69,19 +70,23 @@ fn status_key(s: u16) -> String {
     if s == 0 { "default".to_owned() } else { s.to_string() }
 }
 
-/// Builds the OpenAPI 3.1 document for app `A`.
+/// Builds the OpenAPI 3.1 document for the `poring_app!` routes of app `A`, without state
+/// or a server. Use [`App::openapi`](crate::App::openapi) to include fluent and dynamic
+/// routes registered on a built app.
 pub fn openapi<A: AppSpec>(info: &Info) -> Result<Value, StartupError> {
-    let manifest = static_manifest::<A>()?;
-    let app = &A::APP;
+    let (manifest, docs) = static_contract::<A>()?;
+    Ok(document(info, &manifest, &docs))
+}
+
+pub(crate) fn document(info: &Info, manifest: &Manifest, docs: &[RouteDoc]) -> Value {
     let mut reg = SchemaRegistry::new();
     let mut paths: BTreeMap<String, Map<String, Value>> = BTreeMap::new();
     let mut op_ids: BTreeMap<String, usize> = BTreeMap::new();
     let mut uses_bearer = false;
-    for (i, r) in app.routes.iter().enumerate() {
-        let d: &RouteDescriptor = r.desc;
-        let entry = &manifest.routes[i];
+    for (entry, d) in manifest.routes.iter().zip(docs) {
+        let params_names: Vec<&str> = d.params.iter().map(String::as_str).collect();
         let mut op = Map::new();
-        let base_id = d.name.to_owned();
+        let base_id = d.name.clone();
         let n = op_ids.entry(base_id.clone()).or_insert(0);
         *n += 1;
         let op_id = if *n == 1 { base_id } else { entry.id.clone() };
@@ -94,11 +99,11 @@ pub fn openapi<A: AppSpec>(info: &Info) -> Result<Value, StartupError> {
         }
         let mut params = Vec::new();
         let mut body = None;
-        for e in d.extractors {
+        for e in &d.extractors {
             let Some(sf) = e.schema else { continue };
             let s = sf(&mut reg);
             match e.kind {
-                ExtractorKind::Path => params.extend(param_entries("path", &s, d.params, &reg)),
+                ExtractorKind::Path => params.extend(param_entries("path", &s, &params_names, &reg)),
                 ExtractorKind::Query => params.extend(param_entries("query", &s, &[], &reg)),
                 ExtractorKind::Json => body = Some(("application/json", s)),
                 ExtractorKind::Form => body = Some(("application/x-www-form-urlencoded", s)),
@@ -106,7 +111,7 @@ pub fn openapi<A: AppSpec>(info: &Info) -> Result<Value, StartupError> {
             }
         }
         // Path params declared in the route but not extracted are still part of the path.
-        for p in d.params {
+        for p in &d.params {
             if !params.iter().any(|v| v["in"] == "path" && v["name"] == *p) {
                 params.push(json!({"name": p, "in": "path", "required": true, "schema": {"type": "string"}}));
             }
@@ -118,11 +123,14 @@ pub fn openapi<A: AppSpec>(info: &Info) -> Result<Value, StartupError> {
             op.insert("requestBody".into(), json!({"required": true, "content": {ct: {"schema": s}}}));
         }
         let mut responses = Map::new();
-        for doc in (d.response)(&mut reg) {
+        let documented = d.responses.map(|f| f(&mut reg)).unwrap_or_default();
+        for doc in documented {
             let key = status_key(doc.status);
             let mut resp = json!({"description": if doc.status == 0 { "Response or error" } else { "Success" }});
-            if let (Some(ct), Some(s)) = (doc.content_type, doc.schema) {
-                resp["content"] = json!({ct: {"schema": s}});
+            match (doc.content_type, doc.schema) {
+                (Some(ct), Some(s)) => resp["content"] = json!({ct: {"schema": s}}),
+                (Some(ct), None) => resp["content"] = json!({ct: {}}),
+                _ => {}
             }
             responses.entry(key).or_insert(resp);
         }
@@ -160,7 +168,7 @@ pub fn openapi<A: AppSpec>(info: &Info) -> Result<Value, StartupError> {
         paths
             .entry(openapi_path(&entry.path))
             .or_default()
-            .insert(d.method.as_str().to_ascii_lowercase(), Value::Object(op));
+            .insert(entry.method.to_ascii_lowercase(), Value::Object(op));
     }
     let mut components = json!({ "schemas": reg.components });
     if uses_bearer {
@@ -170,12 +178,12 @@ pub fn openapi<A: AppSpec>(info: &Info) -> Result<Value, StartupError> {
     if let Some(d) = &info.description {
         info_v["description"] = json!(d);
     }
-    Ok(json!({
+    json!({
         "openapi": "3.1.0",
         "info": info_v,
         "paths": paths,
         "components": components,
-    }))
+    })
 }
 
 fn ts_ident(s: &str) -> String {

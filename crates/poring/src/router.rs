@@ -53,6 +53,9 @@ pub enum Target {
     Static(u16),
     /// A dynamically registered endpoint (e.g. a Wasm guest), boxed-dispatched.
     Dynamic(Arc<dyn DynEndpoint>),
+    /// A typed native handler registered through the fluent API (index into the app's
+    /// native handler table).
+    Native(u32),
 }
 
 impl std::fmt::Debug for Target {
@@ -60,6 +63,7 @@ impl std::fmt::Debug for Target {
         match self {
             Target::Static(i) => write!(f, "Static({i})"),
             Target::Dynamic(_) => f.write_str("Dynamic(..)"),
+            Target::Native(i) => write!(f, "Native({i})"),
         }
     }
 }
@@ -192,5 +196,121 @@ impl Router {
             None if wanted == Some(Method::Options) => Lookup::AutoOptions(entry),
             None => Lookup::MethodNotAllowed(entry),
         }
+    }
+}
+
+/// Canonicalises a runtime-registered route path with the rules the route macros apply
+/// at compile time: `{name}` and final `{*rest}` parameters (the `:name` and trailing `*`
+/// shorthands are normalised), no `//`, dot segments, percent-encoded static segments,
+/// `?`, `#` or whitespace, and at most [`crate::ctx::MAX_PARAMS`] parameters.
+///
+/// Returns the canonical path and the parameter names in order.
+pub fn canonicalise(path: &str) -> Result<(String, Vec<String>), String> {
+    if !path.starts_with('/') {
+        return Err(format!("route path `{path}` must start with `/`"));
+    }
+    if path.contains("//") {
+        return Err(format!("route path `{path}` must not contain `//`"));
+    }
+    if path.contains(['?', '#']) || path.chars().any(char::is_whitespace) {
+        return Err(format!("route path `{path}` must not contain `?`, `#` or whitespace"));
+    }
+    if path.contains("{{") || path.contains("}}") {
+        return Err("escaped braces `{{`/`}}` are not supported in Poring route paths".into());
+    }
+    let segs: Vec<&str> = path[1..].split('/').collect();
+    let mut out = String::with_capacity(path.len());
+    let mut params: Vec<String> = Vec::new();
+    for (i, seg) in segs.iter().enumerate() {
+        let last = i + 1 == segs.len();
+        out.push('/');
+        if *seg == "." || *seg == ".." {
+            return Err(format!("route path `{path}` must not contain dot segments"));
+        }
+        if seg.contains('%') {
+            return Err(format!(
+                "route path `{path}`: static segments must not be percent-encoded (Poring matches the raw path)"
+            ));
+        }
+        let (name, catch_all) = if let Some(n) = seg.strip_prefix(':') {
+            (Some(n), false)
+        } else if *seg == "*" {
+            (Some("rest"), true)
+        } else if let Some(inner) = seg.strip_prefix('{') {
+            let inner = inner
+                .strip_suffix('}')
+                .ok_or_else(|| format!("route path `{path}`: unterminated parameter `{seg}`"))?;
+            match inner.strip_prefix('*') {
+                Some(n) => (Some(n), true),
+                None => (Some(inner), false),
+            }
+        } else {
+            if seg.contains(['{', '}', ':', '*']) {
+                return Err(format!(
+                    "route path `{path}`: parameters must span a whole segment (`/{{id}}`), found `{seg}`"
+                ));
+            }
+            (None, false)
+        };
+        match name {
+            None => out.push_str(seg),
+            Some(n) => {
+                if n.is_empty()
+                    || !n.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                    || n.starts_with(|c: char| c.is_ascii_digit())
+                {
+                    return Err(format!(
+                        "route path `{path}`: invalid parameter name `{n}` (use [A-Za-z_][A-Za-z0-9_]*)"
+                    ));
+                }
+                if params.iter().any(|p| p == n) {
+                    return Err(format!("route path `{path}`: duplicate parameter `{n}`"));
+                }
+                if catch_all && !last {
+                    return Err(format!("route path `{path}`: catch-all `{{*{n}}}` must be the last segment"));
+                }
+                params.push(n.to_owned());
+                if catch_all {
+                    out.push_str("{*");
+                } else {
+                    out.push('{');
+                }
+                out.push_str(n);
+                out.push('}');
+            }
+        }
+    }
+    if params.len() > crate::ctx::MAX_PARAMS {
+        return Err(format!("route path `{path}` has more than {} parameters", crate::ctx::MAX_PARAMS));
+    }
+    Ok((out, params))
+}
+
+/// Validates a static group prefix (the rules `poring_app!` applies to `group(..)`).
+pub fn validate_prefix(prefix: &str) -> Result<String, String> {
+    let (canon, params) = canonicalise(prefix).map_err(|e| e.replacen("route path", "group prefix", 1))?;
+    if !params.is_empty() {
+        return Err(format!("group prefix `{prefix}` must be static (no parameters)"));
+    }
+    if canon.len() > 1 && canon.ends_with('/') {
+        return Err(format!("group prefix `{prefix}` must not end with `/`"));
+    }
+    Ok(canon)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn canonical_runtime_paths() {
+        assert_eq!(canonicalise("/users/{id}").unwrap(), ("/users/{id}".into(), vec!["id".into()]));
+        assert_eq!(canonicalise("/users/:id/*").unwrap().0, "/users/{id}/{*rest}");
+        for bad in ["users", "/a//b", "/a/{*r}/b", "/a/{1x}", "/a/x{id}", "/a/%2F", "/a/..", "/a?b", "/{a}/{a}"] {
+            assert!(canonicalise(bad).is_err(), "{bad}");
+        }
+        assert!(validate_prefix("/api").is_ok());
+        assert!(validate_prefix("/api/").is_err());
+        assert!(validate_prefix("/api/{v}").is_err());
     }
 }

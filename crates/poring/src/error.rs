@@ -152,6 +152,10 @@ impl IntoResponse for ApiError {
         }
         r
     }
+
+    fn __poring_describe(reg: &mut crate::schema::SchemaRegistry) -> Vec<crate::descriptor::ResponseDoc> {
+        <ApiError as crate::response::describe::DescribeResponse>::describe(reg)
+    }
 }
 
 /// Framework rejections (extractor and policy failures).

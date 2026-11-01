@@ -86,6 +86,9 @@ pub enum RouteKind {
     Static,
     /// Registered at startup (e.g. a Wasm guest). Validated at startup/reload only.
     Dynamic,
+    /// A typed native handler registered through the fluent API. Handler, extractor and
+    /// state types are checked by the compiler; paths and policies are validated at startup.
+    Native,
 }
 
 /// One route of the application.

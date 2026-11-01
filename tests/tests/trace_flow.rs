@@ -8,19 +8,7 @@ use poring::contract::{RuntimeTrace, build_graph, render_dot, render_json, rende
 use poring::flow::FlowConfig;
 use poring_tests::secure::{NewNote, SecureApp, SecureState, TableAuth};
 
-fn snapshot(name: &str, actual: &str) {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("snapshots").join(name);
-    if std::env::var_os("UPDATE_SNAPSHOTS").is_some() || !path.exists() {
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, actual).unwrap();
-        return;
-    }
-    assert_eq!(
-        std::fs::read_to_string(&path).unwrap(),
-        actual,
-        "snapshot {name} changed (UPDATE_SNAPSHOTS=1 to accept)"
-    );
-}
+use poring_tests::snapshot;
 
 fn recording_app(capacity: usize) -> poring::App<SecureApp> {
     SecureApp::builder()

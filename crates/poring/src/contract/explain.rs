@@ -21,6 +21,7 @@ pub fn explain(manifest: &Manifest, query: &str) -> Option<String> {
         match r.kind {
             RouteKind::Static => "static (declaration verified at compile time by poring_app!)",
             RouteKind::Dynamic => "dynamic (validated at startup/reload only; NOT compile-time verified)",
+            RouteKind::Native => "native (types checked at compile time; path and policy validated at startup)",
         }
     );
     let _ = writeln!(o, "- handler: `{}` ({}:{})", r.handler, r.source.file, r.source.line);
@@ -140,6 +141,7 @@ pub fn audit_markdown(manifest: &Manifest) -> String {
             match r.kind {
                 RouteKind::Static => "static",
                 RouteKind::Dynamic => "dynamic",
+                RouteKind::Native => "native",
             },
             p.auth,
             list(&p.scopes),

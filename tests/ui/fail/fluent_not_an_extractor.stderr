@@ -1,0 +1,25 @@
+error[E0277]: `{closure@$DIR/ui/fail/fluent_not_an_extractor.rs:4:36: 4:44}` is not a Poring handler for app state `()`
+ --> ui/fail/fluent_not_an_extractor.rs:4:36
+  |
+4 |     let _ = Poring::new().get("/", |n: u32| async move { n.to_string() }).build();
+  |                           ---      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ not a valid handler
+  |                           |
+  |                           required by a bound introduced by this call
+  |
+  = help: the trait `poring::Handler<_, ()>` is not implemented for closure `{closure@$DIR/ui/fail/fluent_not_an_extractor.rs:4:36: 4:44}`
+  = note: a handler is an `async fn` or a closure returning a `Send` future; it takes up to 8 extractors (each implementing `FromRequest<()>`) and its output implements `IntoResponse`
+  = note: `State<T>` needs the app state to provide `T`: call `.state(..)` (or `Poring::with_state`) before registering routes
+note: required by a bound in `poring::Poring::<S, Au>::get`
+ --> $WORKSPACE/crates/poring/src/handler.rs
+  |
+  |         pub fn get<H, Args>(self, path: &str, handler: H) -> Self
+  |                --- required by a bound in this associated function
+  |         where
+  |             H: $crate::handler::Handler<Args, $S>,
+  |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Poring::<S, Au>::get`
+  |
+ ::: $WORKSPACE/crates/poring/src/fluent.rs
+  |
+  |     route_methods!(S);
+  |     ----------------- in this macro invocation
+  = note: this error originates in the macro `route_methods` (in Nightly builds, run with -Z macro-backtrace for more info)

@@ -287,6 +287,19 @@ fn after_calls(hooks: &[Path], st: &TokenStream) -> Vec<TokenStream> {
         .collect()
 }
 
+fn after_calls_ref(hooks: &[Path], st: &TokenStream) -> Vec<TokenStream> {
+    let p = quote!(::poring::__private);
+    hooks
+        .iter()
+        .map(|h| {
+            quote_spanned! {h.span()=>
+                cx.__mark_after();
+                <#h as #p::AfterHook<#st>>::after(cx, __res).await;
+            }
+        })
+        .collect()
+}
+
 fn group_tokens(
     name: &str,
     prefix: &str,
@@ -355,6 +368,7 @@ pub fn expand_app(input: TokenStream) -> syn::Result<TokenStream> {
     let mut arms = Vec::new();
     let gb = before_calls(&a.before, &st);
     let ga = after_calls(&a.after, &st);
+    let ga_ref = after_calls_ref(&a.after, &st);
     let mut idx: u16 = 0;
     let mut push_route = |r: &Path,
                           group: Option<(u16, &GroupInput)>,
@@ -508,6 +522,30 @@ pub fn expand_app(input: TokenStream) -> syn::Result<TokenStream> {
                         _ => ::std::boxed::Box::pin(async move { #p::unknown_route() }),
                     };
                 fut
+            }
+
+            #unused_label
+            fn __global_before<'a, 'c>(cx: &'c mut #p::Ctx<'a, #st>)
+                -> impl ::core::future::Future<Output = ::core::result::Result<(), #p::Response>> + ::core::marker::Send + 'c
+            {
+                async move {
+                    let __early: #p::Response = 'run: {
+                        #(#gb)*
+                        let _ = &cx;
+                        return ::core::result::Result::Ok(());
+                    };
+                    ::core::result::Result::Err(__early)
+                }
+            }
+
+            #[allow(clippy::needless_lifetimes)]
+            fn __global_after<'a, 'c>(cx: &'c mut #p::Ctx<'a, #st>, __res: &'c mut #p::Response)
+                -> impl ::core::future::Future<Output = ()> + ::core::marker::Send + 'c
+            {
+                async move {
+                    #(#ga_ref)*
+                    let _ = (&cx, &__res);
+                }
             }
         }
 

@@ -11,7 +11,9 @@ use std::pin::Pin;
 use bytes::Bytes;
 use http::{HeaderMap, Method, Uri};
 
-use crate::policy::{AuthSpec, Identity, PolicySpec, RateLimitSpec, TimeoutSpec};
+use std::time::Duration;
+
+use crate::policy::{Identity, Policy, RateLimitSpec};
 use crate::response::Response;
 
 /// A boxed, sendable future.
@@ -70,38 +72,32 @@ pub struct DynPolicy {
     pub rate_limit: Option<RateLimitSpec>,
 }
 
-fn leak(s: String) -> &'static str {
-    // Dynamic routes are registered once at startup (hot reload swaps guests behind an
-    // existing route, it never re-registers), so this is a bounded, one-time allocation.
-    Box::leak(s.into_boxed_str())
-}
-
-fn leak_list(v: &[String]) -> &'static [&'static str] {
-    let items: Vec<&'static str> = v.iter().map(|s| leak(s.clone())).collect();
-    Box::leak(items.into_boxed_slice())
-}
-
 impl DynPolicy {
-    pub(crate) fn to_spec(&self) -> PolicySpec {
-        PolicySpec {
-            auth: match (self.auth_required, &self.public_reason) {
-                (Some(true), _) => AuthSpec::Required,
-                (Some(false), r) => AuthSpec::Public { reason: leak(r.clone().unwrap_or_default()) },
-                (None, _) => AuthSpec::Inherit,
-            },
-            strict: false,
-            scopes: leak_list(&self.scopes),
-            roles: leak_list(&self.roles),
-            body_limit: self.body_limit,
-            content_types: leak_list(&self.content_types),
-            csrf: crate::policy::CsrfSpec::Inherit,
-            timeout: match self.timeout_ms {
-                None => TimeoutSpec::Inherit,
-                Some(0) => TimeoutSpec::Disabled,
-                Some(ms) => TimeoutSpec::Ms(ms),
-            },
-            rate_limit: self.rate_limit,
+    /// The equivalent owned [`Policy`], resolved with the same rules as fluent routes.
+    pub(crate) fn to_policy(&self) -> Policy {
+        let mut p = Policy::new();
+        p = match (self.auth_required, self.public_reason.as_deref()) {
+            (Some(true), _) => p.authenticated(),
+            (Some(false), Some(r)) if !r.is_empty() => p.public_with_reason(r),
+            (Some(false), _) => p.public(),
+            (None, _) => p,
+        };
+        p = p.scopes(self.scopes.iter().cloned()).roles(self.roles.iter().cloned());
+        if let Some(l) = self.body_limit {
+            p = p.body_limit(l);
         }
+        if !self.content_types.is_empty() {
+            p = p.content_types(self.content_types.iter().cloned());
+        }
+        p = match self.timeout_ms {
+            None => p,
+            Some(0) => p.no_timeout(),
+            Some(ms) => p.timeout(Duration::from_millis(ms)),
+        };
+        if let Some(r) = self.rate_limit {
+            p = p.rate_limit(r.requests, Duration::from_millis(r.per_ms), r.key);
+        }
+        p
     }
 }
 

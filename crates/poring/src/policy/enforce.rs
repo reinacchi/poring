@@ -80,6 +80,22 @@ impl CorsRuntime {
         }
     }
 
+    /// Builds from an owned fluent declaration.
+    pub fn from_cors(c: &crate::policy::Cors) -> Self {
+        let headers = if c.headers.is_empty() {
+            "content-type, authorization, x-csrf-token, x-request-id".to_owned()
+        } else {
+            c.headers.join(", ")
+        };
+        CorsRuntime {
+            origins: c.origins.clone(),
+            wildcard: c.origins.iter().any(|o| o == "*"),
+            credentials: c.credentials,
+            allow_headers: HeaderValue::from_str(&headers).unwrap_or_else(|_| HeaderValue::from_static("content-type")),
+            max_age: HeaderValue::from(c.max_age_secs),
+        }
+    }
+
     /// Whether `origin` is allowed.
     pub fn allows(&self, origin: &str) -> bool {
         (self.wildcard && !self.credentials) || self.origins.iter().any(|o| o == origin)

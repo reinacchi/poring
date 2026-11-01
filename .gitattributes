@@ -1,0 +1,5 @@
+# Keep LF line endings on every platform: snapshots, trybuild `.stderr` files and README
+# examples are compared byte for byte.
+* text=auto eol=lf
+*.png binary
+*.wasm binary

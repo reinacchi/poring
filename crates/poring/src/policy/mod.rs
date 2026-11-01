@@ -14,7 +14,11 @@ pub mod enforce;
 pub mod resolve;
 
 pub use auth::{AuthError, AuthRequest, Authenticator, Credential, Identity, NoAuth};
+pub use owned::{Cors, Policy};
 pub use resolve::{CsrfMode, EffectivePolicy, resolve};
+
+mod owned;
+pub(crate) use owned::{Level, LevelAuth, LevelCsrf, LevelKind};
 
 /// Authentication requirement at one declaration level.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -124,6 +128,29 @@ impl PolicySpec {
         timeout: TimeoutSpec::Inherit,
         rate_limit: None,
     };
+
+    /// Borrowed view used by the resolver.
+    pub(crate) fn level(&self) -> Level<'static> {
+        Level {
+            auth: match self.auth {
+                AuthSpec::Inherit => LevelAuth::Inherit,
+                AuthSpec::Required => LevelAuth::Required,
+                AuthSpec::Public { reason } => LevelAuth::Public(reason),
+            },
+            strict: self.strict,
+            scopes: self.scopes.to_vec(),
+            roles: self.roles.to_vec(),
+            body_limit: self.body_limit,
+            content_types: self.content_types.to_vec(),
+            csrf: match self.csrf {
+                CsrfSpec::Inherit => LevelCsrf::Inherit,
+                CsrfSpec::Enforce => LevelCsrf::Enforce,
+                CsrfSpec::Exempt { reason } => LevelCsrf::Exempt(reason),
+            },
+            timeout: self.timeout,
+            rate_limit: self.rate_limit,
+        }
+    }
 }
 
 /// Default maximum request body size when nothing is declared: 1 MiB.

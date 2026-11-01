@@ -1,0 +1,35 @@
+error[E0080]: evaluation panicked: poring: GET handlers cannot read the request body
+ --> $RUST/core/src/panic.rs
+  |
+  = note: evaluation of `poring::Poring::get::<{closure@$DIR/ui/fail/fluent_get_with_body.rs:4:36: 4:50}, (std::string::String,)>::{constant#0}` failed here
+  |
+ ::: $WORKSPACE/crates/poring/src/fluent.rs
+  |
+  |     route_methods!(S);
+  |     ----------------- in this macro invocation
+  |
+  = note: this error originates in the macro `$crate::panic::panic_2021` which comes from the expansion of the macro `route_methods` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+note: erroneous constant encountered
+ --> $WORKSPACE/crates/poring/src/handler.rs
+  |
+  | /             const {
+  | |                 assert!(
+  | |                     !<H as $crate::handler::Handler<Args, $S>>::READS_BODY,
+  | |                     "poring: GET handlers cannot read the request body"
+  | |                 )
+  | |             };
+  | |_____________^
+  |
+ ::: $WORKSPACE/crates/poring/src/fluent.rs
+  |
+  |       route_methods!(S);
+  |       ----------------- in this macro invocation
+  |
+  = note: this note originates in the macro `route_methods` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+note: the above error was encountered while instantiating `fn poring::Poring::get::<{closure@$DIR/ui/fail/fluent_get_with_body.rs:4:36: 4:50}, (String,)>`
+ --> ui/fail/fluent_get_with_body.rs:4:13
+  |
+4 |     let _ = Poring::new().get("/", |body: String| async move { body }).build();
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

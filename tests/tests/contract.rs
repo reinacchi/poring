@@ -2,17 +2,7 @@
 
 use poring_tests::shop::{Category, NewProduct, Product, ProductPage, Shop, ShopState};
 
-fn snapshot(name: &str, actual: &str) {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("snapshots").join(name);
-    if std::env::var_os("UPDATE_SNAPSHOTS").is_some() || !path.exists() {
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, actual).unwrap();
-        eprintln!("wrote snapshot {}", path.display());
-        return;
-    }
-    let expected = std::fs::read_to_string(&path).unwrap();
-    assert_eq!(expected, actual, "snapshot {name} changed; rerun with UPDATE_SNAPSHOTS=1 if intended");
-}
+use poring_tests::snapshot;
 
 #[tokio::test]
 async fn shop_app_end_to_end() {
@@ -91,7 +81,9 @@ void main;
 "#,
     )
     .unwrap();
-    let tsc = std::process::Command::new("tsc")
+    // npm installs `tsc.cmd` on Windows; `Command` does not resolve `.cmd` through PATHEXT.
+    let program = if cfg!(windows) { "tsc.cmd" } else { "tsc" };
+    let tsc = std::process::Command::new(program)
         .args([
             "--noEmit",
             "--strict",
@@ -113,6 +105,8 @@ void main;
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr)
         ),
-        Err(e) => eprintln!("SKIPPED: `tsc` not available ({e}); TS client was generated but not type-checked"),
+        // CI installs TypeScript, so a missing compiler there is a failure, not a skip.
+        Err(e) if std::env::var_os("CI").is_some() => panic!("`{program}` is required in CI: {e}"),
+        Err(e) => eprintln!("SKIPPED: `{program}` not available ({e}); TS client was generated but not type-checked"),
     }
 }
