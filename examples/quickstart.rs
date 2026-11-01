@@ -1,4 +1,3 @@
-//! The README quickstart (kept identical by `tests/tests/readme.rs`).
 use poring::prelude::*;
 
 fn main() -> Result<(), poring::StartupError> {
