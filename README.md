@@ -1,4 +1,4 @@
-<p align="center"><img src="Poring.png" alt="Poring Logo" width="250"/></p>
+<p align="center"><img src="Poring.png" alt="Poring Logo" width="350"/></p>
 
 <h1 align="center">Poring</h1>
 <p align="center">
@@ -8,9 +8,9 @@
 </p>
 
 <p align="center">
-  <a href="https://kirameki.moe"><strong>Website</strong></a>
+  <a href="https://poring.2rkf.fun"><strong>Website</strong></a>
   ·
-  <a href="https://discord.gg/CqBf9vkD8m"><strong>Discord</strong></a>
+  <a href="https://discord.gg/wynvba7skH"><strong>Discord</strong></a>
 </p>
 
 ## Examples
