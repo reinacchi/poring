@@ -182,7 +182,11 @@ impl WasmHost {
                 }
             })
             .map_err(|e| LoadError::Compile(format!("cannot start epoch ticker: {e}")))?;
-        Ok(Arc::new(WasmHost { engine, _ticker: ticker, stop }))
+        Ok(Arc::new(WasmHost {
+            engine,
+            _ticker: ticker,
+            stop,
+        }))
     }
 }
 
@@ -200,12 +204,22 @@ struct Limiter {
 }
 
 impl wasmtime::ResourceLimiter for Limiter {
-    fn memory_growing(&mut self, _current: usize, desired: usize, _max: Option<usize>) -> wasmtime::Result<bool> {
+    fn memory_growing(
+        &mut self,
+        _current: usize,
+        desired: usize,
+        _max: Option<usize>,
+    ) -> wasmtime::Result<bool> {
         let ok = desired <= self.max_memory;
         self.denied |= !ok;
         Ok(ok)
     }
-    fn table_growing(&mut self, _current: usize, desired: usize, _max: Option<usize>) -> wasmtime::Result<bool> {
+    fn table_growing(
+        &mut self,
+        _current: usize,
+        desired: usize,
+        _max: Option<usize>,
+    ) -> wasmtime::Result<bool> {
         let ok = desired <= self.max_table;
         self.denied |= !ok;
         Ok(ok)
@@ -230,7 +244,11 @@ impl bindings::poring::plugin::log::Host for StoreState {
             return;
         }
         self.log_lines += 1;
-        let msg: String = message.chars().filter(|c| !c.is_control()).take(MAX_LOG_BYTES).collect();
+        let msg: String = message
+            .chars()
+            .filter(|c| !c.is_control())
+            .take(MAX_LOG_BYTES)
+            .collect();
         match level {
             0 | 1 => tracing::error!(target: "poring::guest", guest = %self.guest, "{msg}"),
             2 => tracing::info!(target: "poring::guest", guest = %self.guest, "{msg}"),
@@ -317,19 +335,29 @@ pub struct GuestSlot {
 
 impl std::fmt::Debug for GuestSlot {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("GuestSlot").field("name", &self.cfg.name).field("current", &*self.current.load()).finish()
+        f.debug_struct("GuestSlot")
+            .field("name", &self.cfg.name)
+            .field("current", &*self.current.load())
+            .finish()
     }
 }
 
 fn sha256_hex(b: &[u8]) -> String {
-    sha2::Sha256::digest(b).iter().map(|x| format!("{x:02x}")).collect()
+    sha2::Sha256::digest(b)
+        .iter()
+        .map(|x| format!("{x:02x}"))
+        .collect()
 }
 
 fn new_store(host: &WasmHost, cfg: &GuestConfig, fuel: u64) -> Result<Store<StoreState>, String> {
     let mut store = Store::new(
         &host.engine,
         StoreState {
-            limits: Limiter { max_memory: cfg.max_memory_bytes, max_table: cfg.max_table_elements, denied: false },
+            limits: Limiter {
+                max_memory: cfg.max_memory_bytes,
+                max_table: cfg.max_table_elements,
+                denied: false,
+            },
             log_lines: 0,
             guest: cfg.name.clone(),
         },
@@ -356,11 +384,18 @@ fn classify(err: wasmtime::Error, store: &Store<StoreState>) -> CallError {
 
 impl GuestSlot {
     /// Loads the initial version. Fails if the artefact does not pass preflight.
-    pub fn new(host: Arc<WasmHost>, cfg: GuestConfig, artefact: &[u8]) -> Result<Arc<Self>, LoadError> {
+    pub fn new(
+        host: Arc<WasmHost>,
+        cfg: GuestConfig,
+        artefact: &[u8],
+    ) -> Result<Arc<Self>, LoadError> {
         let mut linker = Linker::new(&host.engine);
         if cfg.granted.contains(CAP_LOG) {
-            bindings::poring::plugin::log::add_to_linker::<StoreState, HasSelf<StoreState>>(&mut linker, |s| s)
-                .map_err(|e| LoadError::Compile(e.to_string()))?;
+            bindings::poring::plugin::log::add_to_linker::<StoreState, HasSelf<StoreState>>(
+                &mut linker,
+                |s| s,
+            )
+            .map_err(|e| LoadError::Compile(e.to_string()))?;
         }
         let first = Self::preflight(&host, &cfg, &linker, artefact, 1)?;
         let slot = Arc::new(GuestSlot {
@@ -384,7 +419,11 @@ impl GuestSlot {
     }
 
     /// Loads the initial version from a file.
-    pub fn from_file(host: Arc<WasmHost>, cfg: GuestConfig, path: &std::path::Path) -> Result<Arc<Self>, LoadError> {
+    pub fn from_file(
+        host: Arc<WasmHost>,
+        cfg: GuestConfig,
+        path: &std::path::Path,
+    ) -> Result<Arc<Self>, LoadError> {
         let bytes = std::fs::read(path).map_err(|e| LoadError::Io(e.to_string()))?;
         Self::new(host, cfg, &bytes)
     }
@@ -400,12 +439,18 @@ impl GuestSlot {
             return Err(LoadError::TooLarge(artefact.len()));
         }
         let sha256 = sha256_hex(artefact);
-        let component = Component::new(&host.engine, artefact).map_err(|e| LoadError::Compile(format!("{e:#}")))?;
-        let instance_pre = linker.instantiate_pre(&component).map_err(|e| LoadError::DeniedImport(format!("{e:#}")))?;
-        let pre = bindings::GuestPre::new(instance_pre).map_err(|e| LoadError::Compile(format!("{e:#}")))?;
+        let component = Component::new(&host.engine, artefact)
+            .map_err(|e| LoadError::Compile(format!("{e:#}")))?;
+        let instance_pre = linker
+            .instantiate_pre(&component)
+            .map_err(|e| LoadError::DeniedImport(format!("{e:#}")))?;
+        let pre = bindings::GuestPre::new(instance_pre)
+            .map_err(|e| LoadError::Compile(format!("{e:#}")))?;
         // Probe in an isolated store with the production limits.
         let mut store = new_store(host, cfg, cfg.fuel).map_err(LoadError::Preflight)?;
-        let guest = pre.instantiate(&mut store).map_err(|e| LoadError::Preflight(format!("instantiate: {e:#}")))?;
+        let guest = pre
+            .instantiate(&mut store)
+            .map_err(|e| LoadError::Preflight(format!("instantiate: {e:#}")))?;
         let info = guest
             .poring_plugin_handler()
             .call_info(&mut store)
@@ -414,25 +459,41 @@ impl GuestSlot {
             return Err(LoadError::Abi { found: info.abi });
         }
         if info.name != cfg.name {
-            return Err(LoadError::Name { expected: cfg.name.clone(), found: info.name });
+            return Err(LoadError::Name {
+                expected: cfg.name.clone(),
+                found: info.name,
+            });
         }
-        let denied: Vec<String> = info.capabilities.iter().filter(|c| !cfg.granted.contains(*c)).cloned().collect();
+        let denied: Vec<String> = info
+            .capabilities
+            .iter()
+            .filter(|c| !cfg.granted.contains(*c))
+            .cloned()
+            .collect();
         if !denied.is_empty() {
             return Err(LoadError::DeniedCapability(denied));
         }
         // Warm-up probe call in a fresh store (per-request semantics).
         let mut store = new_store(host, cfg, cfg.fuel).map_err(LoadError::Preflight)?;
-        let guest = pre.instantiate(&mut store).map_err(|e| LoadError::Preflight(format!("instantiate: {e:#}")))?;
+        let guest = pre
+            .instantiate(&mut store)
+            .map_err(|e| LoadError::Preflight(format!("instantiate: {e:#}")))?;
         let probe = handler::Request {
             method: "GET".into(),
             path: "/__poring/probe".into(),
             query: String::new(),
-            headers: vec![handler::Header { name: "x-poring-probe".into(), value: "1".into() }],
+            headers: vec![handler::Header {
+                name: "x-poring-probe".into(),
+                value: "1".into(),
+            }],
             body: Vec::new(),
             params: Vec::new(),
             principal: None,
         };
-        if let Err(e) = guest.poring_plugin_handler().call_handle(&mut store, &probe) {
+        if let Err(e) = guest
+            .poring_plugin_handler()
+            .call_handle(&mut store, &probe)
+        {
             let why = match classify(e, &store) {
                 CallError::OutOfFuel => "probe exhausted its fuel".to_owned(),
                 CallError::Timeout => "probe exceeded the time limit".to_owned(),
@@ -490,7 +551,9 @@ impl GuestSlot {
             }
             Err(e) => {
                 tracing::warn!(guest = %self.cfg.name, error = %e, "guest reload rejected; keeping the active version");
-                self.event(ReloadEvent::Rejected { reason: e.to_string() });
+                self.event(ReloadEvent::Rejected {
+                    reason: e.to_string(),
+                });
                 Err(e)
             }
         }
@@ -498,7 +561,11 @@ impl GuestSlot {
 
     /// Re-activates the most recent retained previous version.
     pub fn rollback(&self) -> Option<Arc<GuestVersion>> {
-        let prev = self.history.lock().unwrap_or_else(|p| p.into_inner()).pop_back()?;
+        let prev = self
+            .history
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .pop_back()?;
         self.current.store(prev.clone());
         tracing::warn!(guest = %self.cfg.name, seq = prev.seq, "guest rolled back");
         self.event(ReloadEvent::RolledBack { seq: prev.seq });
@@ -512,12 +579,22 @@ impl GuestSlot {
 
     /// Retained previous versions (oldest first).
     pub fn history(&self) -> Vec<Arc<GuestVersion>> {
-        self.history.lock().unwrap_or_else(|p| p.into_inner()).iter().cloned().collect()
+        self.history
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .iter()
+            .cloned()
+            .collect()
     }
 
     /// Recent reload events (bounded).
     pub fn events(&self) -> Vec<ReloadEvent> {
-        self.events.lock().unwrap_or_else(|p| p.into_inner()).iter().cloned().collect()
+        self.events
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .iter()
+            .cloned()
+            .collect()
     }
 
     /// Total guest calls executed.
@@ -575,7 +652,8 @@ impl GuestSlot {
         match result {
             Ok(Ok(resp)) => self.map_response(resp, &lease),
             Ok(Err(ge)) => {
-                let status = StatusCode::from_u16(ge.status.clamp(400, 599)).unwrap_or(StatusCode::BAD_GATEWAY);
+                let status = StatusCode::from_u16(ge.status.clamp(400, 599))
+                    .unwrap_or(StatusCode::BAD_GATEWAY);
                 let msg: String = ge.message.chars().take(512).collect();
                 error_response(status, "guest_error", &msg, &lease)
             }
@@ -599,7 +677,12 @@ impl GuestSlot {
             ),
             Err(CallError::Trap(t)) => {
                 tracing::warn!(guest = %self.cfg.name, seq = lease.seq, trap = %t, "guest trapped");
-                error_response(StatusCode::INTERNAL_SERVER_ERROR, "guest_trap", "guest failed", &lease)
+                error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "guest_trap",
+                    "guest failed",
+                    &lease,
+                )
             }
         }
     }
@@ -623,27 +706,48 @@ impl GuestSlot {
                 .iter()
                 .take(64)
                 .filter_map(|(k, v)| {
-                    v.to_str().ok().map(|v| handler::Header { name: k.as_str().to_owned(), value: v.to_owned() })
+                    v.to_str().ok().map(|v| handler::Header {
+                        name: k.as_str().to_owned(),
+                        value: v.to_owned(),
+                    })
                 })
                 .collect(),
             body: req.body.to_vec(),
-            params: req.params.into_iter().map(|(name, value)| handler::Header { name, value }).collect(),
+            params: req
+                .params
+                .into_iter()
+                .map(|(name, value)| handler::Header { name, value })
+                .collect(),
             principal: req.identity.map(|i| i.subject),
         };
-        guest.poring_plugin_handler().call_handle(&mut store, &wreq).map_err(|e| classify(e, &store))
+        guest
+            .poring_plugin_handler()
+            .call_handle(&mut store, &wreq)
+            .map_err(|e| classify(e, &store))
     }
 
     fn map_response(&self, r: handler::Response, v: &GuestVersion) -> Response {
         if r.body.len() > self.cfg.max_response_bytes {
-            return error_response(StatusCode::BAD_GATEWAY, "guest_response_too_large", "guest response too large", v);
+            return error_response(
+                StatusCode::BAD_GATEWAY,
+                "guest_response_too_large",
+                "guest response too large",
+                v,
+            );
         }
-        let status =
-            StatusCode::from_u16(r.status).ok().filter(|s| !s.is_informational()).unwrap_or(StatusCode::BAD_GATEWAY);
+        let status = StatusCode::from_u16(r.status)
+            .ok()
+            .filter(|s| !s.is_informational())
+            .unwrap_or(StatusCode::BAD_GATEWAY);
         let mut res = (status, Bytes::from(r.body)).into_response();
         res.headers_mut().remove(http::header::CONTENT_TYPE);
         for h in r.headers.into_iter().take(32) {
-            let Ok(name) = HeaderName::from_bytes(h.name.as_bytes()) else { continue };
-            if FORBIDDEN_RESPONSE_HEADERS.contains(&name.as_str()) || name.as_str().starts_with("x-poring-") {
+            let Ok(name) = HeaderName::from_bytes(h.name.as_bytes()) else {
+                continue;
+            };
+            if FORBIDDEN_RESPONSE_HEADERS.contains(&name.as_str())
+                || name.as_str().starts_with("x-poring-")
+            {
                 continue;
             }
             if let Ok(val) = HeaderValue::from_str(&h.value) {

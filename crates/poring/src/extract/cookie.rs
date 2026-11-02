@@ -35,11 +35,12 @@ impl<T> ExtractorMeta for Cookie<T> {
 impl<S: Sync, T: Named + FromStr + Send> FromRequest<S> for Cookie<T> {
     type Rejection = ApiError;
     async fn from_request(cx: &mut Ctx<'_, S>) -> Result<Self, ApiError> {
-        let raw = find_cookie(&cx.parts.headers, T::NAME)
-            .ok_or_else(|| rejection::bad_request("missing_cookie", format!("missing cookie `{}`", T::NAME)))?;
-        raw.parse()
-            .map(Cookie)
-            .map_err(|_| rejection::bad_request("invalid_cookie", format!("invalid cookie `{}`", T::NAME)))
+        let raw = find_cookie(&cx.parts.headers, T::NAME).ok_or_else(|| {
+            rejection::bad_request("missing_cookie", format!("missing cookie `{}`", T::NAME))
+        })?;
+        raw.parse().map(Cookie).map_err(|_| {
+            rejection::bad_request("invalid_cookie", format!("invalid cookie `{}`", T::NAME))
+        })
     }
 }
 
@@ -50,7 +51,10 @@ pub struct Cookies(pub Vec<(String, String)>);
 impl Cookies {
     /// Looks up a cookie.
     pub fn get(&self, name: &str) -> Option<&str> {
-        self.0.iter().find(|(k, _)| k == name).map(|(_, v)| v.as_str())
+        self.0
+            .iter()
+            .find(|(k, _)| k == name)
+            .map(|(_, v)| v.as_str())
     }
 }
 

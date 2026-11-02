@@ -7,12 +7,12 @@ error[E0277]: the app state has not been provided
    = help: the trait `StateReady<AppState>` is not implemented for `Missing`
    = note: this app declares `state: AppState` in `poring_app!`
 help: the trait `StateReady<T>` is implemented for `Provided<T>`
-  --> $WORKSPACE/crates/poring/src/app.rs
+  --> $WORKSPACE/crates/poring/src/app/mod.rs
    |
    | impl<T> StateReady<T> for Provided<T> {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 note: required by a bound in `poring::Builder::<A, St, Au>::build`
-  --> $WORKSPACE/crates/poring/src/app.rs
+  --> $WORKSPACE/crates/poring/src/app/mod.rs
    |
    |     pub fn build(self) -> Result<App<A>, StartupError>
    |            ----- required by a bound in this associated function

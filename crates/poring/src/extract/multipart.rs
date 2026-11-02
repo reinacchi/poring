@@ -25,7 +25,9 @@ pub struct Multipart {
 
 impl std::fmt::Debug for Multipart {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Multipart").field("fields", &self.fields).finish_non_exhaustive()
+        f.debug_struct("Multipart")
+            .field("fields", &self.fields)
+            .finish_non_exhaustive()
     }
 }
 
@@ -39,7 +41,10 @@ fn map_err(e: multer::Error, limit: u64) -> ApiError {
         multer::Error::StreamSizeExceeded { .. } | multer::Error::FieldSizeExceeded { .. } => {
             rejection::payload_too_large(limit)
         }
-        other => rejection::bad_request("invalid_multipart", format!("invalid multipart body: {other}")),
+        other => rejection::bad_request(
+            "invalid_multipart",
+            format!("invalid multipart body: {other}"),
+        ),
     }
 }
 
@@ -52,11 +57,20 @@ impl<S: Sync> FromRequest<S> for Multipart {
             .and_then(|ct| multer::parse_boundary(ct).ok())
             .ok_or_else(|| rejection::unsupported_media_type("multipart/form-data"))?;
         let limit = cx.body_limit();
-        let body = cx.take_body().ok_or_else(|| rejection::internal("body_already_taken"))?;
+        let body = cx
+            .take_body()
+            .ok_or_else(|| rejection::internal("body_already_taken"))?;
         let stream = body.into_data_stream();
-        let constraints =
-            multer::Constraints::new().size_limit(multer::SizeLimit::new().whole_stream(limit).per_field(limit));
-        Ok(Multipart { inner: multer::Multipart::with_constraints(stream, boundary, constraints), fields: 0, limit })
+        let constraints = multer::Constraints::new().size_limit(
+            multer::SizeLimit::new()
+                .whole_stream(limit)
+                .per_field(limit),
+        );
+        Ok(Multipart {
+            inner: multer::Multipart::with_constraints(stream, boundary, constraints),
+            fields: 0,
+            limit,
+        })
     }
 }
 
@@ -64,7 +78,12 @@ impl Multipart {
     /// The next part, or `None` at the end.
     pub async fn next_field(&mut self) -> Result<Option<Field>, ApiError> {
         let limit = self.limit;
-        match self.inner.next_field().await.map_err(|e| map_err(e, limit))? {
+        match self
+            .inner
+            .next_field()
+            .await
+            .map_err(|e| map_err(e, limit))?
+        {
             None => Ok(None),
             Some(f) => {
                 self.fields += 1;
@@ -88,7 +107,9 @@ pub struct Field {
 
 impl std::fmt::Debug for Field {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Field").field("name", &self.inner.name()).finish_non_exhaustive()
+        f.debug_struct("Field")
+            .field("name", &self.inner.name())
+            .finish_non_exhaustive()
     }
 }
 

@@ -1,0 +1,27 @@
+error[E0080]: evaluation panicked: poring: route `GET /status` (handler `status` at $DIR/ui/fail/rate_limit_principal_on_public_route.rs) has a principal-keyed rate limit but is not authenticated; key it by IP or require authentication
+  --> ui/fail/rate_limit_principal_on_public_route.rs:15:1
+   |
+15 | / poring_app! {
+16 | |     pub Api {
+17 | |         auth: Auth,
+18 | |         routes: [status],
+19 | |     }
+20 | | }
+   | |_^ evaluation of `_` failed inside this call
+   |
+note: inside `check_app`
+  --> $WORKSPACE/crates/poring/src/policy/check.rs
+   |
+   | /             describe(Msg::new(), app, r)
+   | |                 .push(" has a principal-keyed rate limit but is not authenticated; key it by IP or require authentication")
+   | |                 .fail();
+   | |_______________________^
+note: inside `Msg::fail`
+  --> $RUST/core/src/panic.rs
+   |
+   = note: the failure occurred here
+   |
+  ::: $WORKSPACE/crates/poring/src/policy/check.rs
+   |
+   |             Ok(s) => panic!("{}", s),
+   |                      --------------- in this macro invocation

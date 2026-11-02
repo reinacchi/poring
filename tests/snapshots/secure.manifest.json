@@ -1,7 +1,7 @@
 {
   "format_version": 1,
   "app": "SecureApp",
-  "poring_version": "0.1.0",
+  "poring_version": "0.1.1",
   "authenticator": "TableAuth",
   "cors": {
     "origins": [
@@ -29,7 +29,7 @@
       "handler": "health",
       "source": {
         "file": "tests/src/secure.rs",
-        "line": 102
+        "line": 120
       },
       "group": null,
       "extractors": [],
@@ -76,7 +76,7 @@
       "handler": "list_notes",
       "source": {
         "file": "tests/src/secure.rs",
-        "line": 108
+        "line": 126
       },
       "group": null,
       "extractors": [
@@ -135,7 +135,7 @@
       "handler": "create_note",
       "source": {
         "file": "tests/src/secure.rs",
-        "line": 117
+        "line": 135
       },
       "group": null,
       "extractors": [
@@ -185,7 +185,10 @@
         "rate_limit": {
           "requests": 2,
           "per_ms": 1000,
-          "key": "principal"
+          "key": "principal",
+          "algorithm": "token_bucket",
+          "scope": "route",
+          "headers": false
         },
         "provenance": [
           "deny_anonymous (strict) <- app defaults",
@@ -218,7 +221,7 @@
       "handler": "me",
       "source": {
         "file": "tests/src/secure.rs",
-        "line": 129
+        "line": 152
       },
       "group": null,
       "extractors": [
@@ -252,7 +255,10 @@
         "rate_limit": {
           "requests": 3,
           "per_ms": 1000,
-          "key": "ip"
+          "key": "ip",
+          "algorithm": "token_bucket",
+          "scope": "route",
+          "headers": false
         },
         "provenance": [
           "deny_anonymous (strict) <- app defaults",
@@ -279,7 +285,7 @@
       "handler": "slow",
       "source": {
         "file": "tests/src/secure.rs",
-        "line": 135
+        "line": 158
       },
       "group": null,
       "extractors": [],
@@ -327,7 +333,7 @@
       "handler": "webhook",
       "source": {
         "file": "tests/src/secure.rs",
-        "line": 142
+        "line": 165
       },
       "group": null,
       "extractors": [
@@ -383,7 +389,7 @@
       "handler": "admin_stats",
       "source": {
         "file": "tests/src/secure.rs",
-        "line": 148
+        "line": 171
       },
       "group": "/admin",
       "extractors": [

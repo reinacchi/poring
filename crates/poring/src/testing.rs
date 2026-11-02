@@ -100,12 +100,19 @@ impl<A: AppSpec> TestRequest<A> {
             .expect("test request must be valid");
         *req.headers_mut() = self.headers;
         if !self.body.is_empty() && !req.headers().contains_key(http::header::CONTENT_LENGTH) {
-            req.headers_mut().insert(http::header::CONTENT_LENGTH, HeaderValue::from(self.body.len()));
+            req.headers_mut().insert(
+                http::header::CONTENT_LENGTH,
+                HeaderValue::from(self.body.len()),
+            );
         }
         let res = self.app.handle(req, self.peer).await;
         let (parts, body) = res.into_parts();
         let body = body.collect_bytes().await.unwrap_or_default();
-        TestResponse { status: parts.status, headers: parts.headers, body }
+        TestResponse {
+            status: parts.status,
+            headers: parts.headers,
+            body,
+        }
     }
 }
 

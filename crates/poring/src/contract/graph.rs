@@ -188,13 +188,23 @@ struct Builder {
 impl Builder {
     fn node(&mut self, id: String, route: Option<&str>, kind: NodeKind, label: String) -> String {
         if self.seen.insert(id.clone()) {
-            self.nodes.push(FlowNode { id: id.clone(), route: route.map(str::to_owned), kind, label });
+            self.nodes.push(FlowNode {
+                id: id.clone(),
+                route: route.map(str::to_owned),
+                kind,
+                label,
+            });
         }
         id
     }
 
     fn edge(&mut self, from: &str, to: &str, kind: EdgeKind, label: Option<&str>) {
-        let e = FlowEdge { from: from.to_owned(), to: to.to_owned(), kind, label: label.map(str::to_owned) };
+        let e = FlowEdge {
+            from: from.to_owned(),
+            to: to.to_owned(),
+            kind,
+            label: label.map(str::to_owned),
+        };
         if !self.edges.contains(&e) {
             self.edges.push(e);
         }
@@ -210,22 +220,60 @@ pub fn build_graph(manifest: &Manifest, route_filter: Option<&str>) -> Option<Fl
         Some(q) => vec![manifest.find(q)?],
         None => manifest.routes.iter().collect(),
     };
-    let mut b = Builder { nodes: Vec::new(), edges: Vec::new(), seen: BTreeSet::new() };
-    let receive = b.node(stage::RECEIVE.into(), None, NodeKind::Edge, "receive".into());
-    let matcher = b.node(stage::MATCH.into(), None, NodeKind::Router, "route match".into());
-    let send = b.node(stage::SEND.into(), None, NodeKind::Edge, "send response".into());
+    let mut b = Builder {
+        nodes: Vec::new(),
+        edges: Vec::new(),
+        seen: BTreeSet::new(),
+    };
+    let receive = b.node(
+        stage::RECEIVE.into(),
+        None,
+        NodeKind::Edge,
+        "receive".into(),
+    );
+    let matcher = b.node(
+        stage::MATCH.into(),
+        None,
+        NodeKind::Router,
+        "route match".into(),
+    );
+    let send = b.node(
+        stage::SEND.into(),
+        None,
+        NodeKind::Edge,
+        "send response".into(),
+    );
     b.edge(&receive, &matcher, EdgeKind::Next, None);
     if route_filter.is_none() {
-        let nf = b.node(stage::NOT_FOUND.into(), None, NodeKind::Branch, "404 Not Found".into());
-        let mna =
-            b.node(stage::METHOD_NOT_ALLOWED.into(), None, NodeKind::Branch, "405 Method Not Allowed (+Allow)".into());
+        let nf = b.node(
+            stage::NOT_FOUND.into(),
+            None,
+            NodeKind::Branch,
+            "404 Not Found".into(),
+        );
+        let mna = b.node(
+            stage::METHOD_NOT_ALLOWED.into(),
+            None,
+            NodeKind::Branch,
+            "405 Method Not Allowed (+Allow)".into(),
+        );
         b.edge(&matcher, &nf, EdgeKind::Error, Some("404"));
         b.edge(&matcher, &mna, EdgeKind::Error, Some("405"));
         b.edge(&nf, &send, EdgeKind::Next, None);
         b.edge(&mna, &send, EdgeKind::Next, None);
         if manifest.cors.is_some() {
-            let pf = b.node(stage::CORS_PREFLIGHT.into(), None, NodeKind::Branch, "CORS preflight (204)".into());
-            b.edge(&matcher, &pf, EdgeKind::ShortCircuit, Some("OPTIONS preflight"));
+            let pf = b.node(
+                stage::CORS_PREFLIGHT.into(),
+                None,
+                NodeKind::Branch,
+                "CORS preflight (204)".into(),
+            );
+            b.edge(
+                &matcher,
+                &pf,
+                EdgeKind::ShortCircuit,
+                Some("OPTIONS preflight"),
+            );
             b.edge(&pf, &send, EdgeKind::Next, None);
         }
     }
@@ -235,25 +283,41 @@ pub fn build_graph(manifest: &Manifest, route_filter: Option<&str>) -> Option<Fl
     }
 
     let mut meta = vec![
-        ("format_version".to_owned(), crate::contract::MANIFEST_FORMAT_VERSION.to_string()),
+        (
+            "format_version".to_owned(),
+            crate::contract::MANIFEST_FORMAT_VERSION.to_string(),
+        ),
         ("poring_version".to_owned(), manifest.poring_version.clone()),
     ];
     if let Some(a) = &manifest.authenticator {
         meta.push(("authenticator".to_owned(), a.clone()));
     }
     meta.sort();
-    Some(FlowGraph { app: manifest.app.clone(), meta, nodes: b.nodes, edges: b.edges })
+    Some(FlowGraph {
+        app: manifest.app.clone(),
+        meta,
+        nodes: b.nodes,
+        edges: b.edges,
+    })
 }
 
 fn add_route(b: &mut Builder, r: &RouteEntry, matcher: &str, send: &str) {
     let rid = r.id.as_str();
     let id = |s: &str| format!("{rid}.{s}");
-    let respond =
-        b.node(id(stage::RESPOND), Some(rid), NodeKind::Respond, format!("{} {}: map response", r.method, r.path));
+    let respond = b.node(
+        id(stage::RESPOND),
+        Some(rid),
+        NodeKind::Respond,
+        format!("{} {}: map response", r.method, r.path),
+    );
 
     let deny = |b: &mut Builder, from: &str, status: &str, why: &str| {
-        let d =
-            b.node(format!("{rid}.{}.{status}", stage::DENY), Some(rid), NodeKind::Branch, format!("deny {status}"));
+        let d = b.node(
+            format!("{rid}.{}.{status}", stage::DENY),
+            Some(rid),
+            NodeKind::Branch,
+            format!("deny {status}"),
+        );
         b.edge(from, &d, EdgeKind::Deny, Some(&format!("{status} {why}")));
         b.edge(&d, send, EdgeKind::Next, None);
     };
@@ -261,7 +325,11 @@ fn add_route(b: &mut Builder, r: &RouteEntry, matcher: &str, send: &str) {
     let mut prev = matcher.to_owned();
     let mut first = true;
     let step = |b: &mut Builder, prev: &mut String, node: String, first: &mut bool| {
-        let label = if *first { Some(format!("{} {}", r.method, r.path)) } else { None };
+        let label = if *first {
+            Some(format!("{} {}", r.method, r.path))
+        } else {
+            None
+        };
         b.edge(prev, &node, EdgeKind::Next, label.as_deref());
         *first = false;
         *prev = node;
@@ -271,15 +339,32 @@ fn add_route(b: &mut Builder, r: &RouteEntry, matcher: &str, send: &str) {
         let (label, denials): (String, &[(&str, &str)]) = match check.as_str() {
             "cors" => ("CORS origin check".into(), &[("403", "origin not allowed")]),
             "rate_limit" => {
-                let rl = r
-                    .policy
-                    .rate_limit
-                    .as_ref()
-                    .map(|l| format!("rate limit {}/{}ms by {}", l.requests, l.per_ms, l.key))
-                    .unwrap_or_else(|| "rate limit".into());
-                (rl, &[("429", "too many requests")])
+                let mut rl = match &r.policy.rate_limit {
+                    Some(l) => {
+                        let mut s =
+                            format!("rate limit {}/{}ms by {}", l.requests, l.per_ms, l.key);
+                        if let Some(owner) = &l.shared_by {
+                            s.push_str(&format!(" (bucket shared by {owner})"));
+                        }
+                        s
+                    }
+                    None => "rate limit".into(),
+                };
+                if let Some(c) = &r.policy.rate_limit_ceiling {
+                    rl.push_str(&format!(
+                        " + app ceiling {}/{}ms by {}",
+                        c.requests, c.per_ms, c.key
+                    ));
+                }
+                (
+                    rl,
+                    &[("429", "too many requests"), ("503", "rate limiter full")],
+                )
             }
-            "auth" => ("authenticate (trusted authenticator)".into(), &[("401", "unauthenticated")]),
+            "auth" => (
+                "authenticate (trusted authenticator)".into(),
+                &[("401", "unauthenticated")],
+            ),
             "authz" => {
                 let mut l = String::from("authorise");
                 if !r.policy.scopes.is_empty() {
@@ -290,7 +375,10 @@ fn add_route(b: &mut Builder, r: &RouteEntry, matcher: &str, send: &str) {
                 }
                 (l, &[("403", "forbidden")])
             }
-            "csrf" => ("CSRF check (cookie auth, unsafe method)".into(), &[("403", "csrf")]),
+            "csrf" => (
+                "CSRF check (cookie auth, unsafe method)".into(),
+                &[("403", "csrf")],
+            ),
             "body_gate" => (
                 format!(
                     "body gate <= {} bytes{}",
@@ -301,7 +389,10 @@ fn add_route(b: &mut Builder, r: &RouteEntry, matcher: &str, send: &str) {
                         format!(", types={:?}", r.policy.content_types)
                     }
                 ),
-                &[("413", "payload too large"), ("415", "unsupported media type")],
+                &[
+                    ("413", "payload too large"),
+                    ("415", "unsupported media type"),
+                ],
             ),
             _ => continue,
         };
@@ -312,10 +403,19 @@ fn add_route(b: &mut Builder, r: &RouteEntry, matcher: &str, send: &str) {
         }
     }
 
-    let after_entry = if r.hooks.after.is_empty() { respond.clone() } else { id(&format!("{}.0", stage::AFTER)) };
+    let after_entry = if r.hooks.after.is_empty() {
+        respond.clone()
+    } else {
+        id(&format!("{}.0", stage::AFTER))
+    };
 
     if !r.hooks.before.is_empty() {
-        let sc = b.node(id(stage::SHORT_CIRCUIT), Some(rid), NodeKind::Branch, "early response from hook".into());
+        let sc = b.node(
+            id(stage::SHORT_CIRCUIT),
+            Some(rid),
+            NodeKind::Branch,
+            "early response from hook".into(),
+        );
         for (i, h) in r.hooks.before.iter().enumerate() {
             let n = b.node(
                 id(&format!("{}.{i}", stage::BEFORE)),
@@ -332,7 +432,12 @@ fn add_route(b: &mut Builder, r: &RouteEntry, matcher: &str, send: &str) {
 
     let has_reject = !r.extractors.is_empty();
     let reject = if has_reject {
-        let n = b.node(id(stage::REJECT), Some(rid), NodeKind::Branch, "extractor rejection (4xx)".into());
+        let n = b.node(
+            id(stage::REJECT),
+            Some(rid),
+            NodeKind::Branch,
+            "extractor rejection (4xx)".into(),
+        );
         b.edge(&n, &after_entry, EdgeKind::Next, None);
         Some(n)
     } else {
@@ -364,10 +469,25 @@ fn add_route(b: &mut Builder, r: &RouteEntry, matcher: &str, send: &str) {
     }
 
     let handler = if r.kind == RouteKind::Dynamic {
-        let ver = r.meta.iter().find(|(k, _)| k == "guest_version").map(|(_, v)| v.as_str()).unwrap_or("?");
-        b.node(id(stage::WASM), Some(rid), NodeKind::Handler, format!("wasm guest {} (version {ver})", r.handler))
+        let ver = r
+            .meta
+            .iter()
+            .find(|(k, _)| k == "guest_version")
+            .map(|(_, v)| v.as_str())
+            .unwrap_or("?");
+        b.node(
+            id(stage::WASM),
+            Some(rid),
+            NodeKind::Handler,
+            format!("wasm guest {} (version {ver})", r.handler),
+        )
     } else {
-        b.node(id(stage::HANDLER), Some(rid), NodeKind::Handler, format!("handler {}", r.handler))
+        b.node(
+            id(stage::HANDLER),
+            Some(rid),
+            NodeKind::Handler,
+            format!("handler {}", r.handler),
+        )
     };
     step(b, &mut prev, handler.clone(), &mut first);
     for (i, a) in r.annotations.iter().enumerate() {
@@ -382,7 +502,12 @@ fn add_route(b: &mut Builder, r: &RouteEntry, matcher: &str, send: &str) {
     if r.policy.timeout_ms.is_some() {
         deny(b, &handler, "503", "timeout");
     }
-    let err = b.node(id(stage::ERROR), Some(rid), NodeKind::Branch, "handler error -> IntoResponse".into());
+    let err = b.node(
+        id(stage::ERROR),
+        Some(rid),
+        NodeKind::Branch,
+        "handler error -> IntoResponse".into(),
+    );
     b.edge(&handler, &err, EdgeKind::Error, Some("Err"));
     b.edge(&err, &after_entry, EdgeKind::Next, None);
 

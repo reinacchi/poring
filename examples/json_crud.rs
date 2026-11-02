@@ -78,7 +78,11 @@ async fn list(State(s): State<TodoStore>) -> Json<Vec<Todo>> {
 async fn create(State(s): State<TodoStore>, Json(new): Json<NewTodo>) -> (StatusCode, Json<Todo>) {
     let todo = s.with(|(next, m)| {
         *next += 1;
-        let t = Todo { id: *next, title: new.title, done: false };
+        let t = Todo {
+            id: *next,
+            title: new.title,
+            done: false,
+        };
         m.insert(t.id, t.clone());
         t
     });
@@ -105,7 +109,9 @@ async fn update(
 
 #[poring::delete("/todos/{id}")]
 async fn remove(Path(id): Path<u64>, State(s): State<TodoStore>) -> Result<StatusCode, ApiError> {
-    s.with(|(_, m)| m.remove(&id)).map(|_| StatusCode::NO_CONTENT).ok_or_else(|| TodoError::NotFound(id).into())
+    s.with(|(_, m)| m.remove(&id))
+        .map(|_| StatusCode::NO_CONTENT)
+        .ok_or_else(|| TodoError::NotFound(id).into())
 }
 
 poring_app! {
@@ -119,10 +125,13 @@ poring_app! {
 async fn main() -> Result<(), poring::StartupError> {
     let addr = std::env::var("PORING_ADDR").unwrap_or_else(|_| "127.0.0.1:3000".into());
     Todos::builder()
-        .state(AppState { todos: TodoStore::default() })
+        .state(AppState {
+            todos: TodoStore::default(),
+        })
         // Uniform envelope for framework errors (404/405/415/422...).
         .map_errors(|e, mut res| {
-            res.headers_mut().insert("x-poring-error", HeaderValue::from_static(e.code));
+            res.headers_mut()
+                .insert("x-poring-error", HeaderValue::from_static(e.code));
             res
         })
         .listen(addr)

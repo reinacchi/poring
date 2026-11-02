@@ -18,7 +18,9 @@ fn ctx_state(ty: &Type) -> Option<(Type, bool)> {
     if seg.ident != "Ctx" {
         return None;
     }
-    let PathArguments::AngleBracketed(a) = &seg.arguments else { return None };
+    let PathArguments::AngleBracketed(a) = &seg.arguments else {
+        return None;
+    };
     let st = a.args.iter().find_map(|g| match g {
         GenericArgument::Type(t) => Some(t.clone()),
         _ => None,
@@ -45,14 +47,25 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> 
     let FnArg::Typed(first) = first else {
         return Err(err(first.span(), "hooks must be free functions"));
     };
-    let (state, mutable) = ctx_state(&first.ty)
-        .ok_or_else(|| err(first.ty.span(), "the first hook argument must be `&mut Ctx<'_, S>` or `&Ctx<'_, S>`"))?;
+    let (state, mutable) = ctx_state(&first.ty).ok_or_else(|| {
+        err(
+            first.ty.span(),
+            "the first hook argument must be `&mut Ctx<'_, S>` or `&Ctx<'_, S>`",
+        )
+    })?;
     let (impl_generics, _, where_clause) = func.sig.generics.split_for_impl();
-    let await_ = if func.sig.asyncness.is_some() { quote!(.await) } else { quote!() };
+    let await_ = if func.sig.asyncness.is_some() {
+        quote!(.await)
+    } else {
+        quote!()
+    };
     let body = match inputs.len() {
         1 => {
             if !mutable {
-                return Err(err(first.ty.span(), "a before hook takes `&mut Ctx<'_, S>`"));
+                return Err(err(
+                    first.ty.span(),
+                    "a before hook takes `&mut Ctx<'_, S>`",
+                ));
             }
             quote! {
                 impl #impl_generics #p::BeforeHook<#state> for #name #where_clause {
@@ -67,7 +80,10 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> 
         }
         2 => {
             if mutable {
-                return Err(err(first.ty.span(), "an after hook takes `&Ctx<'_, S>` as its first argument"));
+                return Err(err(
+                    first.ty.span(),
+                    "an after hook takes `&Ctx<'_, S>` as its first argument",
+                ));
             }
             quote! {
                 impl #impl_generics #p::AfterHook<#state> for #name #where_clause {

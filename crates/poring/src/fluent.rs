@@ -29,7 +29,7 @@ use crate::contract::SourceLoc;
 use crate::ctx::Ctx;
 use crate::descriptor::AppDescriptor;
 use crate::handler::{Group, HookOutcome, NativeRoute, route_methods};
-use crate::policy::{Authenticator, Cors, LevelKind, NoAuth, Policy};
+use crate::policy::{Authenticator, Cors, LevelKind, NoAuth, Policy, RateLimit};
 use crate::response::Response;
 
 /// An application assembled with method chaining.
@@ -42,6 +42,7 @@ pub struct Poring<S = (), Au = NoAuth> {
     auth: Au,
     has_auth: bool,
     defaults: Policy,
+    rate_limit: Option<RateLimit>,
     cors: Option<Cors>,
     name: String,
     state_after_routes: bool,
@@ -83,6 +84,7 @@ impl<S: Send + Sync + 'static> Poring<S, NoAuth> {
             auth: NoAuth,
             has_auth: false,
             defaults: Policy::new(),
+            rate_limit: None,
             cors: None,
             name: "Poring".to_owned(),
             state_after_routes: false,
@@ -101,6 +103,7 @@ impl<Au: Authenticator> Poring<(), Au> {
             auth: self.auth,
             has_auth: self.has_auth,
             defaults: self.defaults,
+            rate_limit: self.rate_limit,
             cors: self.cors,
             name: self.name,
             state_after_routes: self.state_after_routes || !self.cfg.native.is_empty(),
@@ -114,7 +117,9 @@ impl<Au: Authenticator> Poring<(), Au> {
                 dynamic: self.cfg.dynamic,
                 native: Default::default(),
                 request_ids: self.cfg.request_ids,
-                trust_forwarded_for: self.cfg.trust_forwarded_for,
+                trusted_proxies: self.cfg.trusted_proxies,
+                legacy_forwarded_for: self.cfg.legacy_forwarded_for,
+                rate_limit_ceiling: self.cfg.rate_limit_ceiling,
             },
         }
     }
@@ -129,6 +134,7 @@ impl<S: Send + Sync + 'static> Poring<S, NoAuth> {
             auth,
             has_auth: true,
             defaults: self.defaults,
+            rate_limit: self.rate_limit,
             cors: self.cors,
             name: self.name,
             state_after_routes: self.state_after_routes,
@@ -149,6 +155,17 @@ impl<S: Send + Sync + 'static, Au: Authenticator> Poring<S, Au> {
     /// Sets the app-level default policy, merged before group and route policies.
     pub fn policy(mut self, policy: Policy) -> Self {
         self.defaults = policy;
+        self
+    }
+
+    /// The app's default rate limit, inherited by every route that does not declare its
+    /// own (the most specific declaration wins). With [`RateScope::App`] all those routes
+    /// share one bucket per client; otherwise each route has its own. For a limit that
+    /// routes cannot override, use [`rate_limit_ceiling`](Poring::rate_limit_ceiling).
+    ///
+    /// [`RateScope::App`]: crate::policy::RateScope::App
+    pub fn rate_limit(mut self, limit: RateLimit) -> Self {
+        self.rate_limit = Some(limit);
         self
     }
 
@@ -184,7 +201,13 @@ impl<S: Send + Sync + 'static, Au: Authenticator> Poring<S, Au> {
     #[track_caller]
     pub fn group(mut self, prefix: &str, f: impl FnOnce(Group<S>) -> Group<S>) -> Self {
         let loc = std::panic::Location::caller();
-        let g = f(Group::new(prefix, SourceLoc { file: loc.file().replace('\\', "/"), line: loc.line() }));
+        let g = f(Group::new(
+            prefix,
+            SourceLoc {
+                file: loc.file().replace('\\', "/"),
+                line: loc.line(),
+            },
+        ));
         self.cfg.native.add_group(g);
         self
     }
@@ -206,10 +229,22 @@ impl<S: Send + Sync + 'static, Au: Authenticator> Poring<S, Au> {
                     .into(),
             ));
         }
-        self.defaults.validate(LevelKind::App).map_err(|e| StartupError::Config(format!("app defaults: {e}")))?;
+        let mut defaults = self.defaults;
+        if let Some(limit) = self.rate_limit {
+            if defaults.has_rate_limit() {
+                return Err(StartupError::Config(
+                    "the app rate limit is declared by both `.rate_limit(..)` and `.policy(..)`"
+                        .into(),
+                ));
+            }
+            defaults = defaults.with_rate_limit(limit);
+        }
+        defaults
+            .validate(LevelKind::App)
+            .map_err(|e| StartupError::Config(format!("app defaults: {e}")))?;
         let level = AppLevel {
             name: self.name,
-            defaults: self.defaults,
+            defaults,
             has_authenticator: self.has_auth,
             auth_type: if self.has_auth {
                 crate::handler::pretty_type_name(std::any::type_name::<Au>())
@@ -218,6 +253,7 @@ impl<S: Send + Sync + 'static, Au: Authenticator> Poring<S, Au> {
             },
             auth_uses_cookies: self.has_auth && Au::USES_COOKIES,
             cors: self.cors,
+            ceiling: None,
         };
         App::from_parts(self.state, self.auth, self.cfg, level)
     }
@@ -239,7 +275,9 @@ impl<S: Send + Sync + 'static, Au: Authenticator> Poring<S, Au> {
         }
         // Validate before starting threads so configuration errors surface immediately.
         let app = self.build()?;
-        let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()?;
         rt.block_on(app.listen(addr))
     }
 }
@@ -263,7 +301,10 @@ impl<S: Send + Sync + 'static, Au: Authenticator> AppSpec for Poring<S, Au> {
         routes: &[],
     };
 
-    fn dispatch<'a, 'c>(index: u16, cx: &'c mut Ctx<'a, S>) -> impl std::future::Future<Output = Response> + Send + 'c {
+    fn dispatch<'a, 'c>(
+        index: u16,
+        cx: &'c mut Ctx<'a, S>,
+    ) -> impl std::future::Future<Output = Response> + Send + 'c {
         let _ = (index, cx);
         std::future::ready(crate::__private::unknown_route())
     }

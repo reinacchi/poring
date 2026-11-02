@@ -34,7 +34,11 @@ method_attr!(get => "GET", post => "POST", put => "PUT", patch => "PATCH", delet
 /// Declares a route with an explicit method: `#[poring::route(PUT, "/path", ..)]`.
 #[proc_macro_attribute]
 pub fn route(attr: TokenStream, item: TokenStream) -> TokenStream {
-    out(route::expand(route::Kind::Generic, attr.into(), item.into()))
+    out(route::expand(
+        route::Kind::Generic,
+        attr.into(),
+        item.into(),
+    ))
 }
 
 /// Declares a WebSocket route (a `GET` that upgrades): `#[poring::ws("/chat")]`.

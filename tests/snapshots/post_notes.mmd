@@ -10,6 +10,7 @@ flowchart TD
     post_notes_authz[/"authorise scopes=['notes:write']"/]
     post_notes_rate_limit[/"rate limit 2/1000ms by principal"/]
     post_notes_deny_429(["deny 429"])
+    post_notes_deny_503(["deny 503"])
     post_notes_csrf[/"CSRF check (cookie auth, unsafe method)"/]
     post_notes_body_gate[/"body gate &lt;= 1024 bytes, types=['application/json']"/]
     post_notes_deny_413(["deny 413"])
@@ -22,7 +23,6 @@ flowchart TD
     post_notes_extract_2["extract Json&lt;NewNote&gt; (json)"]
     post_notes_validate_2["validate Json&lt;NewNote&gt;"]
     post_notes_handler[["handler create_note"]]
-    post_notes_deny_503(["deny 503"])
     post_notes_error(["handler error -&gt; IntoResponse"])
     receive --> match
     match -->|"POST /notes"| post_notes_cors
@@ -36,6 +36,8 @@ flowchart TD
     post_notes_authz --> post_notes_rate_limit
     post_notes_rate_limit -.->|"429 too many requests"| post_notes_deny_429
     post_notes_deny_429 --> send
+    post_notes_rate_limit -.->|"503 rate limiter full"| post_notes_deny_503
+    post_notes_deny_503 --> send
     post_notes_rate_limit --> post_notes_csrf
     post_notes_csrf -.->|"403 csrf"| post_notes_deny_403
     post_notes_csrf --> post_notes_body_gate
@@ -57,7 +59,6 @@ flowchart TD
     post_notes_validate_2 -.->|"422 invalid"| post_notes_reject
     post_notes_validate_2 --> post_notes_handler
     post_notes_handler -.->|"503 timeout"| post_notes_deny_503
-    post_notes_deny_503 --> send
     post_notes_handler -.->|"Err"| post_notes_error
     post_notes_error --> post_notes_respond
     post_notes_handler --> post_notes_respond
@@ -65,5 +66,5 @@ flowchart TD
     classDef deny fill:#fde2e2,stroke:#c0392b,color:#7b241c
     classDef security fill:#e8f0fe,stroke:#1a5fb4
     classDef visited stroke:#1e8449,stroke-width:3px
-    class post_notes_deny_403,post_notes_deny_401,post_notes_deny_429,post_notes_deny_413,post_notes_deny_415,post_notes_short_circuit,post_notes_reject,post_notes_deny_503,post_notes_error deny
+    class post_notes_deny_403,post_notes_deny_401,post_notes_deny_429,post_notes_deny_503,post_notes_deny_413,post_notes_deny_415,post_notes_short_circuit,post_notes_reject,post_notes_error deny
     class post_notes_cors,post_notes_auth,post_notes_authz,post_notes_rate_limit,post_notes_csrf,post_notes_body_gate security

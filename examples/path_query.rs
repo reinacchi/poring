@@ -45,7 +45,10 @@ async fn issues(Path(p): Path<RepoPath>, Query(q): Query<IssueQuery>) -> Json<se
 /// Tuple path parameters by position.
 #[poring::get("/points/{x}/{y}")]
 async fn point(Path((x, y)): Path<(i32, i32)>) -> String {
-    format!("({x}, {y}) is {} from the origin", f64::from(x).hypot(f64::from(y)))
+    format!(
+        "({x}, {y}) is {} from the origin",
+        f64::from(x).hypot(f64::from(y))
+    )
 }
 
 poring_app! {

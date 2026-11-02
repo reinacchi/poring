@@ -16,7 +16,10 @@ pub async fn raw_http(addr: std::net::SocketAddr, request: &[u8]) -> String {
 
 /// Status code of a raw HTTP/1.1 response.
 pub fn status_of(raw: &str) -> u16 {
-    raw.split_whitespace().nth(1).and_then(|s| s.parse().ok()).unwrap_or(0)
+    raw.split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0)
 }
 
 pub mod secure;
@@ -26,14 +29,18 @@ pub mod shop;
 /// Windows checkout with CRLF line endings compares equal. Set `UPDATE_SNAPSHOTS=1` to
 /// (re)write snapshots; a missing snapshot is an error otherwise.
 pub fn snapshot(name: &str, actual: &str) {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("snapshots").join(name);
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("snapshots")
+        .join(name);
     if std::env::var_os("UPDATE_SNAPSHOTS").is_some() {
-        std::fs::create_dir_all(path.parent().expect("snapshot directory")).expect("create snapshot directory");
+        std::fs::create_dir_all(path.parent().expect("snapshot directory"))
+            .expect("create snapshot directory");
         std::fs::write(&path, actual).expect("write snapshot");
         return;
     }
-    let expected = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("snapshot {name} is missing ({e}); run with UPDATE_SNAPSHOTS=1 to create it"));
+    let expected = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+        panic!("snapshot {name} is missing ({e}); run with UPDATE_SNAPSHOTS=1 to create it")
+    });
     assert_eq!(
         expected.replace("\r\n", "\n"),
         actual.replace("\r\n", "\n"),
@@ -47,8 +54,14 @@ pub mod readme {
     pub fn normalise(s: &str) -> String {
         let s = s.replace("\r\n", "\n").replace('\r', "\n");
         let lines: Vec<&str> = s.lines().map(str::trim_end).collect();
-        let start = lines.iter().position(|l| !l.is_empty()).unwrap_or(lines.len());
-        let end = lines.iter().rposition(|l| !l.is_empty()).map_or(start, |e| e + 1);
+        let start = lines
+            .iter()
+            .position(|l| !l.is_empty())
+            .unwrap_or(lines.len());
+        let end = lines
+            .iter()
+            .rposition(|l| !l.is_empty())
+            .map_or(start, |e| e + 1);
         let mut out = lines[start..end].join("\n");
         out.push('\n');
         out
@@ -74,7 +87,9 @@ pub mod readme {
         let mut lines = region.lines();
         while let Some(line) = lines.next() {
             let t = line.trim_start();
-            let Some(info) = t.strip_prefix("```") else { continue };
+            let Some(info) = t.strip_prefix("```") else {
+                continue;
+            };
             let lang = info.split([',', ' ']).next().unwrap_or("").trim();
             let mut body = Vec::new();
             let mut closed = false;
@@ -94,15 +109,22 @@ pub mod readme {
         }
         match blocks.len() {
             1 => Ok(normalise(&blocks[0])),
-            0 => Err(format!("README block `{name}` contains no ```rust code fence")),
-            n => Err(format!("README block `{name}` contains {n} Rust code fences; expected one")),
+            0 => Err(format!(
+                "README block `{name}` contains no ```rust code fence"
+            )),
+            n => Err(format!(
+                "README block `{name}` contains {n} Rust code fences; expected one"
+            )),
         }
     }
 
     /// An example file without its leading `//!` module documentation.
     pub fn example_body(source: &str) -> String {
         let source = source.replace("\r\n", "\n");
-        let body: Vec<&str> = source.lines().skip_while(|l| l.trim_start().starts_with("//!")).collect();
+        let body: Vec<&str> = source
+            .lines()
+            .skip_while(|l| l.trim_start().starts_with("//!"))
+            .collect();
         normalise(&body.join("\n"))
     }
 }

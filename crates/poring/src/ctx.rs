@@ -24,7 +24,10 @@ pub(crate) struct Params<'a> {
 
 impl<'a> Params<'a> {
     pub(crate) fn new() -> Self {
-        Params { items: [("", 0, 0); MAX_PARAMS], len: 0 }
+        Params {
+            items: [("", 0, 0); MAX_PARAMS],
+            len: 0,
+        }
     }
 
     pub(crate) fn push(&mut self, name: &'a str, start: usize, end: usize) -> bool {
@@ -41,7 +44,9 @@ impl<'a> Params<'a> {
     }
 
     pub(crate) fn iter(&self) -> impl Iterator<Item = (&'a str, usize, usize)> + '_ {
-        self.items[..self.len].iter().map(|(n, s, e)| (*n, *s as usize, *e as usize))
+        self.items[..self.len]
+            .iter()
+            .map(|(n, s, e)| (*n, *s as usize, *e as usize))
     }
 }
 
@@ -82,7 +87,8 @@ impl RequestId {
             let b = v.as_bytes();
             if !b.is_empty()
                 && b.len() <= 64
-                && b.iter().all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'_' | b'-'))
+                && b.iter()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'_' | b'-'))
             {
                 return RequestId::Client(v.clone());
             }
@@ -106,7 +112,8 @@ impl RequestId {
                 for i in 0..digits {
                     buf[9 + i] = HEX[((n >> (4 * (digits - 1 - i))) & 0xf) as usize];
                 }
-                HeaderValue::from_bytes(&buf[..9 + digits]).unwrap_or_else(|_| HeaderValue::from_static("invalid"))
+                HeaderValue::from_bytes(&buf[..9 + digits])
+                    .unwrap_or_else(|_| HeaderValue::from_static("invalid"))
             }
         }
     }
@@ -139,6 +146,7 @@ pub struct Ctx<'a, S> {
     pub(crate) request_id: RequestId,
     pub(crate) response_headers: Option<HeaderMap>,
     pub(crate) limits: &'a crate::app::Limits,
+    pub(crate) rate_limit: Option<crate::policy::rate_limit::RateOutcome>,
 }
 
 impl<S> fmt::Debug for Ctx<'_, S> {
@@ -181,12 +189,16 @@ impl<'a, S> Ctx<'a, S> {
     /// Raw (still percent-encoded) path parameter.
     pub fn raw_param(&self, name: &str) -> Option<&str> {
         let path = self.parts.uri.path();
-        self.params.iter().find(|(n, _, _)| *n == name).and_then(|(_, s, e)| path.get(s..e))
+        self.params
+            .iter()
+            .find(|(n, _, _)| *n == name)
+            .and_then(|(_, s, e)| path.get(s..e))
     }
 
     /// Percent-decoded path parameter. Malformed encodings yield `None`.
     pub fn param(&self, name: &str) -> Option<Cow<'_, str>> {
-        self.raw_param(name).and_then(|v| crate::extract::path::decode(v).ok())
+        self.raw_param(name)
+            .and_then(|v| crate::extract::path::decode(v).ok())
     }
 
     /// Shared app state.
@@ -214,6 +226,15 @@ impl<'a, S> Ctx<'a, S> {
         &self.route.id
     }
 
+    /// The rate-limit status recorded when this request was admitted, if the route is
+    /// rate limited. Reading it does not take another token.
+    pub fn rate_limit(&self) -> Option<&crate::policy::RateLimitStatus> {
+        match &self.rate_limit {
+            Some(crate::policy::rate_limit::RateOutcome::Checked { status, .. }) => Some(status),
+            _ => None,
+        }
+    }
+
     /// Effective body limit for this route.
     pub fn body_limit(&self) -> u64 {
         self.route.policy.body_limit
@@ -221,7 +242,9 @@ impl<'a, S> Ctx<'a, S> {
 
     /// Sets a header on the eventual response (applied after all hooks).
     pub fn set_response_header(&mut self, name: HeaderName, value: HeaderValue) {
-        self.response_headers.get_or_insert_with(HeaderMap::new).insert(name, value);
+        self.response_headers
+            .get_or_insert_with(HeaderMap::new)
+            .insert(name, value);
     }
 
     /// Takes the request body (at most once). Custom body extractors must use
@@ -232,7 +255,10 @@ impl<'a, S> Ctx<'a, S> {
 
     /// Content-Type header value, if valid UTF-8.
     pub fn content_type(&self) -> Option<&str> {
-        self.parts.headers.get(http::header::CONTENT_TYPE).and_then(|v| v.to_str().ok())
+        self.parts
+            .headers
+            .get(http::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
     }
 
     pub(crate) fn limits(&self) -> &crate::app::Limits {
@@ -328,7 +354,12 @@ mod tests {
 
     #[test]
     fn generated_header_matches_display() {
-        for (p, n) in [(0u32, 0u64), (0xdead_beef, 1), (1, u64::MAX), (0x0a0b0c0d, 0x1234)] {
+        for (p, n) in [
+            (0u32, 0u64),
+            (0xdead_beef, 1),
+            (1, u64::MAX),
+            (0x0a0b0c0d, 0x1234),
+        ] {
             let id = RequestId::Generated(p, n);
             assert_eq!(id.to_header().to_str().unwrap(), id.to_string());
         }

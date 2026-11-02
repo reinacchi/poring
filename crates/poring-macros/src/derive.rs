@@ -37,7 +37,10 @@ fn rename_case(name: &str, rule: &str, is_variant: bool) -> String {
         }
         w.into_iter().map(|s| s.to_lowercase()).collect()
     } else {
-        name.split('_').filter(|s| !s.is_empty()).map(str::to_lowercase).collect()
+        name.split('_')
+            .filter(|s| !s.is_empty())
+            .map(str::to_lowercase)
+            .collect()
     };
     let cap = |s: &str| {
         let mut c = s.chars();
@@ -50,7 +53,11 @@ fn rename_case(name: &str, rule: &str, is_variant: bool) -> String {
         "lowercase" => words.concat(),
         "UPPERCASE" => words.concat().to_uppercase(),
         "PascalCase" => words.iter().map(|w| cap(w)).collect(),
-        "camelCase" => words.iter().enumerate().map(|(i, w)| if i == 0 { w.clone() } else { cap(w) }).collect(),
+        "camelCase" => words
+            .iter()
+            .enumerate()
+            .map(|(i, w)| if i == 0 { w.clone() } else { cap(w) })
+            .collect(),
         "snake_case" => words.join("_"),
         "SCREAMING_SNAKE_CASE" => words.join("_").to_uppercase(),
         "kebab-case" => words.join("-"),
@@ -83,12 +90,23 @@ struct FieldRules {
     checks: Vec<TokenStream>,
 }
 
-fn field_rules(attrs: &[syn::Attribute], ty: &Type, access: &TokenStream) -> syn::Result<FieldRules> {
+fn field_rules(
+    attrs: &[syn::Attribute],
+    ty: &Type,
+    access: &TokenStream,
+) -> syn::Result<FieldRules> {
     let p = quote!(::poring::__private);
-    let mut r = FieldRules { schema_kv: Vec::new(), checks: Vec::new() };
+    let mut r = FieldRules {
+        schema_kv: Vec::new(),
+        checks: Vec::new(),
+    };
     let vec = inner_is_vec(ty);
     for m in serde_metas(attrs, "poring")? {
-        let key = m.path().get_ident().map(|i| i.to_string()).unwrap_or_default();
+        let key = m
+            .path()
+            .get_ident()
+            .map(|i| i.to_string())
+            .unwrap_or_default();
         let num = |m: &Meta| -> syn::Result<Expr> {
             match m {
                 Meta::NameValue(nv) => Ok(nv.value.clone()),
@@ -99,7 +117,9 @@ fn field_rules(attrs: &[syn::Attribute], ty: &Type, access: &TokenStream) -> syn
             "min_length" | "max_length" => {
                 let v = num(&m)?;
                 let n: usize = match &v {
-                    Expr::Lit(ExprLit { lit: Lit::Int(i), .. }) => i.base10_parse()?,
+                    Expr::Lit(ExprLit {
+                        lit: Lit::Int(i), ..
+                    }) => i.base10_parse()?,
                     _ => return Err(err(v.span(), "expected an integer")),
                 };
                 let kw = match (key.as_str(), vec) {
@@ -109,44 +129,75 @@ fn field_rules(attrs: &[syn::Attribute], ty: &Type, access: &TokenStream) -> syn
                     _ => "maxLength",
                 };
                 r.schema_kv.push((kw.to_owned(), quote!(#n)));
-                let f = if key == "min_length" { quote!(min_length) } else { quote!(max_length) };
-                r.checks.push(quote_spanned!(m.span()=> #p::rules::#f(cx, &#access, #n);));
+                let f = if key == "min_length" {
+                    quote!(min_length)
+                } else {
+                    quote!(max_length)
+                };
+                r.checks
+                    .push(quote_spanned!(m.span()=> #p::rules::#f(cx, &#access, #n);));
             }
             "minimum" | "maximum" => {
                 let v = num(&m)?;
                 let x: f64 = match &v {
-                    Expr::Lit(ExprLit { lit: Lit::Int(i), .. }) => i.base10_parse::<i64>()? as f64,
-                    Expr::Lit(ExprLit { lit: Lit::Float(f), .. }) => f.base10_parse()?,
+                    Expr::Lit(ExprLit {
+                        lit: Lit::Int(i), ..
+                    }) => i.base10_parse::<i64>()? as f64,
+                    Expr::Lit(ExprLit {
+                        lit: Lit::Float(f), ..
+                    }) => f.base10_parse()?,
                     Expr::Unary(u) => match &*u.expr {
-                        Expr::Lit(ExprLit { lit: Lit::Int(i), .. }) => -(i.base10_parse::<i64>()? as f64),
-                        Expr::Lit(ExprLit { lit: Lit::Float(f), .. }) => -f.base10_parse::<f64>()?,
+                        Expr::Lit(ExprLit {
+                            lit: Lit::Int(i), ..
+                        }) => -(i.base10_parse::<i64>()? as f64),
+                        Expr::Lit(ExprLit {
+                            lit: Lit::Float(f), ..
+                        }) => -f.base10_parse::<f64>()?,
                         _ => return Err(err(v.span(), "expected a number")),
                     },
                     _ => return Err(err(v.span(), "expected a number")),
                 };
                 let schema_lit = match &v {
-                    Expr::Lit(ExprLit { lit: Lit::Int(i), .. }) => {
+                    Expr::Lit(ExprLit {
+                        lit: Lit::Int(i), ..
+                    }) => {
                         let n: i64 = i.base10_parse()?;
                         quote!(#n)
                     }
-                    Expr::Unary(u) if matches!(&*u.expr, Expr::Lit(ExprLit { lit: Lit::Int(_), .. })) => {
+                    Expr::Unary(u)
+                        if matches!(
+                            &*u.expr,
+                            Expr::Lit(ExprLit {
+                                lit: Lit::Int(_),
+                                ..
+                            })
+                        ) =>
+                    {
                         let n = x as i64;
                         quote!(#n)
                     }
                     _ => quote!(#x),
                 };
                 r.schema_kv.push((key.clone(), schema_lit));
-                let f = if key == "minimum" { quote!(minimum) } else { quote!(maximum) };
-                r.checks.push(quote_spanned!(m.span()=> #p::rules::#f(cx, &#access, #x);));
+                let f = if key == "minimum" {
+                    quote!(minimum)
+                } else {
+                    quote!(maximum)
+                };
+                r.checks
+                    .push(quote_spanned!(m.span()=> #p::rules::#f(cx, &#access, #x);));
             }
             "non_empty" => {
                 let kw = if vec { "minItems" } else { "minLength" };
                 r.schema_kv.push((kw.to_owned(), quote!(1)));
-                r.checks.push(quote_spanned!(m.span()=> #p::rules::non_empty(cx, &#access);));
+                r.checks
+                    .push(quote_spanned!(m.span()=> #p::rules::non_empty(cx, &#access);));
             }
             "ascii" => {
-                r.schema_kv.push(("pattern".to_owned(), quote!("^[\\x20-\\x7E]*$")));
-                r.checks.push(quote_spanned!(m.span()=> #p::rules::ascii(cx, &#access);));
+                r.schema_kv
+                    .push(("pattern".to_owned(), quote!("^[\\x20-\\x7E]*$")));
+                r.checks
+                    .push(quote_spanned!(m.span()=> #p::rules::ascii(cx, &#access);));
             }
             _ => {
                 return Err(err(
@@ -166,7 +217,9 @@ fn merge_kv(schema: TokenStream, kv: &[(String, TokenStream)]) -> TokenStream {
         return schema;
     }
     let p = quote!(::poring::__private);
-    let inserts = kv.iter().map(|(k, v)| quote!(__m.insert(#k.to_owned(), #p::serde_json::json!(#v));));
+    let inserts = kv
+        .iter()
+        .map(|(k, v)| quote!(__m.insert(#k.to_owned(), #p::serde_json::json!(#v));));
     quote!({
         let __s = #schema;
         let mut __s = if __s.get("$ref").is_some() { #p::serde_json::json!({"allOf": [__s]}) } else { __s };
@@ -190,13 +243,20 @@ pub fn expand_schema(input: TokenStream) -> syn::Result<TokenStream> {
     let mut deny_unknown = false;
     let mut comp_name = name.to_string();
     for m in &container {
-        let key = m.path().get_ident().map(|i| i.to_string()).unwrap_or_default();
+        let key = m
+            .path()
+            .get_ident()
+            .map(|i| i.to_string())
+            .unwrap_or_default();
         match (key.as_str(), m) {
             ("rename_all", Meta::NameValue(nv)) => rename_all = Some(lit_str(&nv.value)?),
             ("deny_unknown_fields", _) => deny_unknown = true,
             ("rename", Meta::NameValue(nv)) => comp_name = lit_str(&nv.value)?,
             ("tag" | "content" | "untagged", _) => {
-                return Err(err(m.span(), "PoringSchema does not support tagged/untagged enum representations yet"));
+                return Err(err(
+                    m.span(),
+                    "PoringSchema does not support tagged/untagged enum representations yet",
+                ));
             }
             _ => {}
         }
@@ -211,7 +271,10 @@ pub fn expand_schema(input: TokenStream) -> syn::Result<TokenStream> {
                 let mut checks = Vec::new();
                 let mut rule_flags = Vec::new();
                 for field in &f.named {
-                    let ident = field.ident.as_ref().ok_or_else(|| err(field.span(), "unnamed field"))?;
+                    let ident = field
+                        .ident
+                        .as_ref()
+                        .ok_or_else(|| err(field.span(), "unnamed field"))?;
                     let ty = &field.ty;
                     let fmetas = serde_metas(&field.attrs, "serde")?;
                     let mut fname = match &rename_all {
@@ -221,13 +284,20 @@ pub fn expand_schema(input: TokenStream) -> syn::Result<TokenStream> {
                     let mut skip = false;
                     let mut has_default = false;
                     for m in &fmetas {
-                        let key = m.path().get_ident().map(|i| i.to_string()).unwrap_or_default();
+                        let key = m
+                            .path()
+                            .get_ident()
+                            .map(|i| i.to_string())
+                            .unwrap_or_default();
                         match (key.as_str(), m) {
                             ("rename", Meta::NameValue(nv)) => fname = lit_str(&nv.value)?,
                             ("skip" | "skip_deserializing", _) => skip = true,
                             ("default", _) => has_default = true,
                             ("flatten", _) => {
-                                return Err(err(m.span(), "PoringSchema does not support `#[serde(flatten)]` yet"));
+                                return Err(err(
+                                    m.span(),
+                                    "PoringSchema does not support `#[serde(flatten)]` yet",
+                                ));
                             }
                             _ => {}
                         }
@@ -289,14 +359,21 @@ pub fn expand_schema(input: TokenStream) -> syn::Result<TokenStream> {
                     #desc
                     #p::serde_json::Value::Object(__o)
                 });
-                (schema, quote!(#(#checks)*), quote!(false #(|| #rule_flags)*))
+                (
+                    schema,
+                    quote!(#(#checks)*),
+                    quote!(false #(|| #rule_flags)*),
+                )
             }
             Fields::Unnamed(f) if f.unnamed.len() == 1 => {
                 let field = &f.unnamed[0];
                 let ty = &field.ty;
                 let access = quote!(self.0);
                 let rules = field_rules(&field.attrs, ty, &access)?;
-                let schema = merge_kv(quote!(<#ty as ::poring::PoringSchema>::schema(reg)), &rules.schema_kv);
+                let schema = merge_kv(
+                    quote!(<#ty as ::poring::PoringSchema>::schema(reg)),
+                    &rules.schema_kv,
+                );
                 let c = &rules.checks;
                 let flag = if rules.checks.is_empty() {
                     quote!(<#ty as ::poring::PoringSchema>::HAS_RULES)
@@ -326,7 +403,11 @@ pub fn expand_schema(input: TokenStream) -> syn::Result<TokenStream> {
                     quote!(false #(|| <#tys as ::poring::PoringSchema>::HAS_RULES)*),
                 )
             }
-            Fields::Unit => (quote!(#p::serde_json::json!({"type": "null"})), quote!(), quote!(false)),
+            Fields::Unit => (
+                quote!(#p::serde_json::json!({"type": "null"})),
+                quote!(),
+                quote!(false),
+            ),
         },
         Data::Enum(e) => {
             let mut names = Vec::new();
@@ -343,7 +424,11 @@ pub fn expand_schema(input: TokenStream) -> syn::Result<TokenStream> {
                 };
                 let mut skip = false;
                 for m in serde_metas(&v.attrs, "serde")? {
-                    let key = m.path().get_ident().map(|i| i.to_string()).unwrap_or_default();
+                    let key = m
+                        .path()
+                        .get_ident()
+                        .map(|i| i.to_string())
+                        .unwrap_or_default();
                     match (key.as_str(), &m) {
                         ("rename", Meta::NameValue(nv)) => n = lit_str(&nv.value)?,
                         ("skip" | "skip_deserializing", _) => skip = true,
@@ -354,12 +439,25 @@ pub fn expand_schema(input: TokenStream) -> syn::Result<TokenStream> {
                     names.push(n);
                 }
             }
-            (quote!(#p::serde_json::json!({"type": "string", "enum": [#(#names),*]})), quote!(), quote!(false))
+            (
+                quote!(#p::serde_json::json!({"type": "string", "enum": [#(#names),*]})),
+                quote!(),
+                quote!(false),
+            )
         }
-        Data::Union(u) => return Err(err(u.union_token.span(), "PoringSchema cannot be derived for unions")),
+        Data::Union(u) => {
+            return Err(err(
+                u.union_token.span(),
+                "PoringSchema cannot be derived for unions",
+            ));
+        }
     };
 
-    let schema_fn = if generic { quote!(#schema_body) } else { quote!(reg.component(#comp_name, |reg| #schema_body)) };
+    let schema_fn = if generic {
+        quote!(#schema_body)
+    } else {
+        quote!(reg.component(#comp_name, |reg| #schema_body))
+    };
     Ok(quote! {
         impl #ig ::poring::PoringSchema for #name #tg #wc {
             const HAS_RULES: bool = #has_rules;
@@ -379,13 +477,22 @@ pub fn expand_state(input: TokenStream) -> syn::Result<TokenStream> {
     let d: DeriveInput = syn::parse2(input)?;
     let name = &d.ident;
     if !d.generics.params.is_empty() {
-        return Err(err(d.generics.span(), "PoringState cannot be derived for generic structs"));
+        return Err(err(
+            d.generics.span(),
+            "PoringState cannot be derived for generic structs",
+        ));
     }
     let Data::Struct(s) = &d.data else {
-        return Err(err(d.ident.span(), "PoringState can only be derived for structs with named fields"));
+        return Err(err(
+            d.ident.span(),
+            "PoringState can only be derived for structs with named fields",
+        ));
     };
     let Fields::Named(f) = &s.fields else {
-        return Err(err(d.ident.span(), "PoringState can only be derived for structs with named fields"));
+        return Err(err(
+            d.ident.span(),
+            "PoringState can only be derived for structs with named fields",
+        ));
     };
     let mut impls = Vec::new();
     for field in &f.named {
@@ -400,7 +507,10 @@ pub fn expand_state(input: TokenStream) -> syn::Result<TokenStream> {
         if skip {
             continue;
         }
-        let ident = field.ident.as_ref().ok_or_else(|| err(field.span(), "unnamed field"))?;
+        let ident = field
+            .ident
+            .as_ref()
+            .ok_or_else(|| err(field.span(), "unnamed field"))?;
         let ty = &field.ty;
         impls.push(quote_spanned! {field.span()=>
             impl ::poring::__private::FromRef<#name> for #ty {

@@ -1,0 +1,5 @@
+error: `scope = group` is only valid in a group or plugin policy
+ --> ui/fail/rate_limit_group_scope_on_route.rs:1:73
+  |
+1 | #[poring::get("/x", policy(rate_limit(requests = 5, per = "1m", scope = group)))]
+  |                                                                         ^^^^^

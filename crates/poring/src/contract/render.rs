@@ -6,11 +6,17 @@ use std::fmt::Write as _;
 use crate::contract::graph::{EdgeKind, FlowGraph, NodeKind, RuntimeTrace};
 
 fn mermaid_id(id: &str) -> String {
-    id.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect()
+    id.chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect()
 }
 
 fn escape_label(s: &str) -> String {
-    s.replace('"', "'").replace('{', "#123;").replace('}', "#125;").replace('<', "&lt;").replace('>', "&gt;")
+    s.replace('"', "'")
+        .replace('{', "#123;")
+        .replace('}', "#125;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 /// Renders the static graph as a Mermaid flowchart.
@@ -48,7 +54,9 @@ fn render_mermaid_inner(g: &FlowGraph, trace: Option<&RuntimeTrace>) -> String {
     let traversed: BTreeSet<(String, String)> = trace
         .map(|t| {
             let p = t.path();
-            p.windows(2).map(|w| (w[0].to_owned(), w[1].to_owned())).collect()
+            p.windows(2)
+                .map(|w| (w[0].to_owned(), w[1].to_owned()))
+                .collect()
         })
         .unwrap_or_default();
     let mut highlight = Vec::new();
@@ -71,21 +79,38 @@ fn render_mermaid_inner(g: &FlowGraph, trace: Option<&RuntimeTrace>) -> String {
             highlight.push(i);
         }
     }
-    let _ = writeln!(out, "    classDef deny fill:#fde2e2,stroke:#c0392b,color:#7b241c");
+    let _ = writeln!(
+        out,
+        "    classDef deny fill:#fde2e2,stroke:#c0392b,color:#7b241c"
+    );
     let _ = writeln!(out, "    classDef security fill:#e8f0fe,stroke:#1a5fb4");
     let _ = writeln!(out, "    classDef visited stroke:#1e8449,stroke-width:3px");
-    let deny: Vec<String> = g.nodes.iter().filter(|n| n.kind == NodeKind::Branch).map(|n| mermaid_id(&n.id)).collect();
+    let deny: Vec<String> = g
+        .nodes
+        .iter()
+        .filter(|n| n.kind == NodeKind::Branch)
+        .map(|n| mermaid_id(&n.id))
+        .collect();
     if !deny.is_empty() {
         let _ = writeln!(out, "    class {} deny", deny.join(","));
     }
-    let sec: Vec<String> = g.nodes.iter().filter(|n| n.kind == NodeKind::Security).map(|n| mermaid_id(&n.id)).collect();
+    let sec: Vec<String> = g
+        .nodes
+        .iter()
+        .filter(|n| n.kind == NodeKind::Security)
+        .map(|n| mermaid_id(&n.id))
+        .collect();
     if !sec.is_empty() {
         let _ = writeln!(out, "    class {} security", sec.join(","));
     }
     if let Some(t) = trace {
         let visited: BTreeSet<String> = t.steps.iter().map(|s| mermaid_id(&s.node)).collect();
-        let present: Vec<String> =
-            g.nodes.iter().map(|n| mermaid_id(&n.id)).filter(|id| visited.contains(id)).collect();
+        let present: Vec<String> = g
+            .nodes
+            .iter()
+            .map(|n| mermaid_id(&n.id))
+            .filter(|id| visited.contains(id))
+            .collect();
         if !present.is_empty() {
             let _ = writeln!(out, "    class {} visited", present.join(","));
         }
@@ -100,7 +125,10 @@ fn render_mermaid_inner(g: &FlowGraph, trace: Option<&RuntimeTrace>) -> String {
 pub fn render_dot(g: &FlowGraph) -> String {
     let mut out = String::new();
     let _ = writeln!(out, "digraph \"{}\" {{", g.app.replace('"', "'"));
-    let _ = writeln!(out, "  rankdir=TB;\n  node [fontname=\"Helvetica\", fontsize=10];");
+    let _ = writeln!(
+        out,
+        "  rankdir=TB;\n  node [fontname=\"Helvetica\", fontsize=10];"
+    );
     for n in &g.nodes {
         let shape = match n.kind {
             NodeKind::Router => "diamond",
@@ -115,15 +143,28 @@ pub fn render_dot(g: &FlowGraph) -> String {
             NodeKind::Security => ", style=filled, fillcolor=\"#e8f0fe\"",
             _ => "",
         };
-        let _ = writeln!(out, "  \"{}\" [label=\"{}\", shape={shape}{fill}];", n.id, n.label.replace('"', "'"));
+        let _ = writeln!(
+            out,
+            "  \"{}\" [label=\"{}\", shape={shape}{fill}];",
+            n.id,
+            n.label.replace('"', "'")
+        );
     }
     for e in &g.edges {
         let style = match e.kind {
             EdgeKind::Next => "solid",
             _ => "dashed",
         };
-        let label = e.label.as_deref().map(|l| format!(", label=\"{}\"", l.replace('"', "'"))).unwrap_or_default();
-        let _ = writeln!(out, "  \"{}\" -> \"{}\" [style={style}{label}];", e.from, e.to);
+        let label = e
+            .label
+            .as_deref()
+            .map(|l| format!(", label=\"{}\"", l.replace('"', "'")))
+            .unwrap_or_default();
+        let _ = writeln!(
+            out,
+            "  \"{}\" -> \"{}\" [style={style}{label}];",
+            e.from, e.to
+        );
     }
     out.push_str("}\n");
     out

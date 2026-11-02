@@ -31,7 +31,11 @@ pub struct Info {
 impl Info {
     /// Creates metadata.
     pub fn new(title: impl Into<String>, version: impl Into<String>) -> Self {
-        Info { title: title.into(), version: version.into(), description: None }
+        Info {
+            title: title.into(),
+            version: version.into(),
+            description: None,
+        }
     }
 }
 
@@ -39,7 +43,12 @@ fn openapi_path(p: &str) -> String {
     p.replace("{*", "{")
 }
 
-fn param_entries(location: &str, schema: &Value, names: &[&str], reg: &SchemaRegistry) -> Vec<Value> {
+fn param_entries(
+    location: &str,
+    schema: &Value,
+    names: &[&str],
+    reg: &SchemaRegistry,
+) -> Vec<Value> {
     let resolved = reg.resolve(schema);
     let mut out = Vec::new();
     if let Some(props) = resolved.get("properties").and_then(Value::as_object) {
@@ -67,7 +76,11 @@ fn param_entries(location: &str, schema: &Value, names: &[&str], reg: &SchemaReg
 }
 
 fn status_key(s: u16) -> String {
-    if s == 0 { "default".to_owned() } else { s.to_string() }
+    if s == 0 {
+        "default".to_owned()
+    } else {
+        s.to_string()
+    }
 }
 
 /// Builds the OpenAPI 3.1 document for the `poring_app!` routes of app `A`, without state
@@ -103,7 +116,9 @@ pub(crate) fn document(info: &Info, manifest: &Manifest, docs: &[RouteDoc]) -> V
             let Some(sf) = e.schema else { continue };
             let s = sf(&mut reg);
             match e.kind {
-                ExtractorKind::Path => params.extend(param_entries("path", &s, &params_names, &reg)),
+                ExtractorKind::Path => {
+                    params.extend(param_entries("path", &s, &params_names, &reg))
+                }
                 ExtractorKind::Query => params.extend(param_entries("query", &s, &[], &reg)),
                 ExtractorKind::Json => body = Some(("application/json", s)),
                 ExtractorKind::Form => body = Some(("application/x-www-form-urlencoded", s)),
@@ -120,7 +135,10 @@ pub(crate) fn document(info: &Info, manifest: &Manifest, docs: &[RouteDoc]) -> V
             op.insert("parameters".into(), Value::Array(params));
         }
         if let Some((ct, s)) = body {
-            op.insert("requestBody".into(), json!({"required": true, "content": {ct: {"schema": s}}}));
+            op.insert(
+                "requestBody".into(),
+                json!({"required": true, "content": {ct: {"schema": s}}}),
+            );
         }
         let mut responses = Map::new();
         let documented = d.responses.map(|f| f(&mut reg)).unwrap_or_default();
@@ -136,16 +154,25 @@ pub(crate) fn document(info: &Info, manifest: &Manifest, docs: &[RouteDoc]) -> V
         }
         if entry.policy.auth == "required" {
             uses_bearer = true;
-            responses.entry("401".to_owned()).or_insert(json!({"description": "Authentication required"}));
+            responses
+                .entry("401".to_owned())
+                .or_insert(json!({"description": "Authentication required"}));
             if !entry.policy.scopes.is_empty() || !entry.policy.roles.is_empty() {
-                responses.entry("403".to_owned()).or_insert(json!({"description": "Missing scope or role"}));
+                responses
+                    .entry("403".to_owned())
+                    .or_insert(json!({"description": "Missing scope or role"}));
             }
-            op.insert("security".into(), json!([{"bearerAuth": entry.policy.scopes}]));
+            op.insert(
+                "security".into(),
+                json!([{"bearerAuth": entry.policy.scopes}]),
+            );
         } else {
             op.insert("security".into(), json!([]));
         }
         if entry.extractors.iter().any(|e| e.validates) {
-            responses.entry("422".to_owned()).or_insert(json!({"description": "Validation failed"}));
+            responses
+                .entry("422".to_owned())
+                .or_insert(json!({"description": "Validation failed"}));
         }
         if responses.is_empty() {
             responses.insert("default".into(), json!({"description": "Response"}));
@@ -187,7 +214,16 @@ pub(crate) fn document(info: &Info, manifest: &Manifest, docs: &[RouteDoc]) -> V
 }
 
 fn ts_ident(s: &str) -> String {
-    let mut out: String = s.chars().map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '_' }).collect();
+    let mut out: String = s
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
     if out.starts_with(|c: char| c.is_ascii_digit()) {
         out.insert(0, '_');
     }
@@ -210,7 +246,11 @@ pub fn ts_type(s: &Value) -> String {
     if let Some(r) = s.get("$ref").and_then(Value::as_str) {
         return ts_ident(r.rsplit('/').next().unwrap_or("unknown"));
     }
-    if let Some(any) = s.get("anyOf").or_else(|| s.get("oneOf")).and_then(Value::as_array) {
+    if let Some(any) = s
+        .get("anyOf")
+        .or_else(|| s.get("oneOf"))
+        .and_then(Value::as_array)
+    {
         let parts: Vec<String> = any.iter().map(ts_type).collect();
         return parts.join(" | ");
     }
@@ -219,7 +259,11 @@ pub fn ts_type(s: &Value) -> String {
         return parts.join(" & ");
     }
     if let Some(e) = s.get("enum").and_then(Value::as_array) {
-        return e.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(" | ");
+        return e
+            .iter()
+            .map(|v| v.to_string())
+            .collect::<Vec<_>>()
+            .join(" | ");
     }
     match s.get("type").and_then(Value::as_str) {
         Some("string") => "string".into(),
@@ -228,9 +272,15 @@ pub fn ts_type(s: &Value) -> String {
         Some("null") => "null".into(),
         Some("array") => {
             if let Some(items) = s.get("prefixItems").and_then(Value::as_array) {
-                format!("[{}]", items.iter().map(ts_type).collect::<Vec<_>>().join(", "))
+                format!(
+                    "[{}]",
+                    items.iter().map(ts_type).collect::<Vec<_>>().join(", ")
+                )
             } else {
-                let inner = s.get("items").map(ts_type).unwrap_or_else(|| "unknown".into());
+                let inner = s
+                    .get("items")
+                    .map(ts_type)
+                    .unwrap_or_else(|| "unknown".into());
                 format!("Array<{inner}>")
             }
         }
@@ -245,7 +295,11 @@ pub fn ts_type(s: &Value) -> String {
                     let fields: Vec<String> = props
                         .iter()
                         .map(|(k, v)| {
-                            let opt = if required.contains(&k.as_str()) { "" } else { "?" };
+                            let opt = if required.contains(&k.as_str()) {
+                                ""
+                            } else {
+                                "?"
+                            };
                             format!("{}{opt}: {}", ts_key(k), ts_type(v))
                         })
                         .collect();
@@ -265,9 +319,15 @@ pub fn ts_type(s: &Value) -> String {
 /// produced by [`openapi`].
 pub fn typescript_client(doc: &Value) -> String {
     let mut o = String::new();
-    let _ = writeln!(o, "// Generated by Poring from the route contract. Do not edit.");
+    let _ = writeln!(
+        o,
+        "// Generated by Poring from the route contract. Do not edit."
+    );
     let _ = writeln!(o, "/* eslint-disable */\n");
-    if let Some(schemas) = doc.pointer("/components/schemas").and_then(Value::as_object) {
+    if let Some(schemas) = doc
+        .pointer("/components/schemas")
+        .and_then(Value::as_object)
+    {
         for (name, s) in schemas {
             let _ = writeln!(o, "export type {} = {};\n", ts_ident(name), ts_type(s));
         }
@@ -298,14 +358,19 @@ function query(q: Record<string, unknown> | undefined): string {{
 }}
 "#
     );
-    let _ = writeln!(o, "export function createClient(baseUrl: string, options: ClientOptions = {{}}) {{");
+    let _ = writeln!(
+        o,
+        "export function createClient(baseUrl: string, options: ClientOptions = {{}}) {{"
+    );
     let _ = writeln!(o, "  const f = options.fetch ?? fetch;");
     let _ = writeln!(
         o,
         "  async function call<T>(method: string, path: string, body: unknown, ct: string | undefined, headers?: Record<string, string>): Promise<T> {{"
     );
-    let _ =
-        writeln!(o, "    const h: Record<string, string> = {{ ...(options.headers ?? {{}}), ...(headers ?? {{}}) }};");
+    let _ = writeln!(
+        o,
+        "    const h: Record<string, string> = {{ ...(options.headers ?? {{}}), ...(headers ?? {{}}) }};"
+    );
     let _ = writeln!(o, "    let payload: string | undefined;");
     let _ = writeln!(
         o,
@@ -315,11 +380,23 @@ function query(q: Record<string, unknown> | undefined): string {{
         o,
         "    else if (body !== undefined && ct) {{ h[\"content-type\"] = ct; payload = new URLSearchParams(body as Record<string, string>).toString(); }}"
     );
-    let _ = writeln!(o, "    const res = await f(baseUrl + path, {{ method, headers: h, body: payload }});");
+    let _ = writeln!(
+        o,
+        "    const res = await f(baseUrl + path, {{ method, headers: h, body: payload }});"
+    );
     let _ = writeln!(o, "    const text = await res.text();");
-    let _ = writeln!(o, "    const isJson = (res.headers.get(\"content-type\") ?? \"\").includes(\"json\");");
-    let _ = writeln!(o, "    const data = isJson && text ? JSON.parse(text) : text;");
-    let _ = writeln!(o, "    if (!res.ok) throw new PoringError(res.status, data);");
+    let _ = writeln!(
+        o,
+        "    const isJson = (res.headers.get(\"content-type\") ?? \"\").includes(\"json\");"
+    );
+    let _ = writeln!(
+        o,
+        "    const data = isJson && text ? JSON.parse(text) : text;"
+    );
+    let _ = writeln!(
+        o,
+        "    if (!res.ok) throw new PoringError(res.status, data);"
+    );
     let _ = writeln!(o, "    return data as T;");
     let _ = writeln!(o, "  }}");
     let _ = writeln!(o, "  return {{");
@@ -327,15 +404,30 @@ function query(q: Record<string, unknown> | undefined): string {{
         for (path, ops) in paths {
             let Some(ops) = ops.as_object() else { continue };
             for (method, op) in ops {
-                let id = op.get("operationId").and_then(Value::as_str).unwrap_or("op");
-                let params = op.get("parameters").and_then(Value::as_array).cloned().unwrap_or_default();
-                let path_params: Vec<&Value> = params.iter().filter(|p| p["in"] == "path").collect();
-                let query_params: Vec<&Value> = params.iter().filter(|p| p["in"] == "query").collect();
+                let id = op
+                    .get("operationId")
+                    .and_then(Value::as_str)
+                    .unwrap_or("op");
+                let params = op
+                    .get("parameters")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
+                let path_params: Vec<&Value> =
+                    params.iter().filter(|p| p["in"] == "path").collect();
+                let query_params: Vec<&Value> =
+                    params.iter().filter(|p| p["in"] == "query").collect();
                 let mut arg_fields = Vec::new();
                 if !path_params.is_empty() {
                     let f: Vec<String> = path_params
                         .iter()
-                        .map(|p| format!("{}: {}", ts_key(p["name"].as_str().unwrap_or("p")), ts_type(&p["schema"])))
+                        .map(|p| {
+                            format!(
+                                "{}: {}",
+                                ts_key(p["name"].as_str().unwrap_or("p")),
+                                ts_type(&p["schema"])
+                            )
+                        })
                         .collect();
                     arg_fields.push(format!("path: {{ {} }}", f.join("; ")));
                 }
@@ -344,13 +436,19 @@ function query(q: Record<string, unknown> | undefined): string {{
                         .iter()
                         .map(|p| {
                             let opt = if p["required"] == true { "" } else { "?" };
-                            format!("{}{opt}: {}", ts_key(p["name"].as_str().unwrap_or("q")), ts_type(&p["schema"]))
+                            format!(
+                                "{}{opt}: {}",
+                                ts_key(p["name"].as_str().unwrap_or("q")),
+                                ts_type(&p["schema"])
+                            )
                         })
                         .collect();
                     arg_fields.push(format!("query?: {{ {} }}", f.join("; ")));
                 }
                 let mut ct = "undefined".to_owned();
-                if let Some(content) = op.pointer("/requestBody/content").and_then(Value::as_object)
+                if let Some(content) = op
+                    .pointer("/requestBody/content")
+                    .and_then(Value::as_object)
                     && let Some((c, v)) = content.iter().next()
                 {
                     arg_fields.push(format!("body: {}", ts_type(&v["schema"])));
@@ -362,7 +460,9 @@ function query(q: Record<string, unknown> | undefined): string {{
                     .get("responses")
                     .and_then(Value::as_object)
                     .and_then(|r| {
-                        r.iter().find(|(k, _)| k.starts_with('2')).or_else(|| r.iter().find(|(k, _)| *k == "default"))
+                        r.iter()
+                            .find(|(k, _)| k.starts_with('2'))
+                            .or_else(|| r.iter().find(|(k, _)| *k == "default"))
                     })
                     .map(|(_, v)| v);
                 let ret = ok
@@ -375,7 +475,11 @@ function query(q: Record<string, unknown> | undefined): string {{
                 for seg in path.split('/').filter(|s| !s.is_empty()) {
                     url.push('/');
                     if let Some(name) = seg.strip_prefix('{').and_then(|s| s.strip_suffix('}')) {
-                        let _ = write!(url, "${{encodeURIComponent(String(args.path.{}))}}", ts_ident(name));
+                        let _ = write!(
+                            url,
+                            "${{encodeURIComponent(String(args.path.{}))}}",
+                            ts_ident(name)
+                        );
                     } else {
                         url.push_str(seg);
                     }
@@ -384,8 +488,16 @@ function query(q: Record<string, unknown> | undefined): string {{
                     url.push('/');
                 }
                 url.push('`');
-                let q = if query_params.is_empty() { "" } else { " + query(args.query)" };
-                let body = if ct == "undefined" { "undefined" } else { "args.body" };
+                let q = if query_params.is_empty() {
+                    ""
+                } else {
+                    " + query(args.query)"
+                };
+                let body = if ct == "undefined" {
+                    "undefined"
+                } else {
+                    "args.body"
+                };
                 let _ = writeln!(
                     o,
                     "    {}: (args: {{ {} }}{}): Promise<{ret}> =>\n      call<{ret}>({:?}, {url}{q}, {body}, {ct}, args.headers),",

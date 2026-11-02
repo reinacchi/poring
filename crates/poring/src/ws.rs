@@ -75,10 +75,19 @@ impl<S: Sync> FromRequest<S> for WebSocketUpgrade {
             || !header_has_token(h, header::CONNECTION, "upgrade")
             || !header_has_token(h, header::UPGRADE, "websocket")
         {
-            return Err(rejection::bad_request("not_websocket", "expected a WebSocket upgrade request"));
+            return Err(rejection::bad_request(
+                "not_websocket",
+                "expected a WebSocket upgrade request",
+            ));
         }
-        if h.get(header::SEC_WEBSOCKET_VERSION).map(|v| v != "13").unwrap_or(true) {
-            return Err(rejection::bad_request("websocket_version", "Sec-WebSocket-Version must be 13"));
+        if h.get(header::SEC_WEBSOCKET_VERSION)
+            .map(|v| v != "13")
+            .unwrap_or(true)
+        {
+            return Err(rejection::bad_request(
+                "websocket_version",
+                "Sec-WebSocket-Version must be 13",
+            ));
         }
         let key = h
             .get(header::SEC_WEBSOCKET_KEY)
@@ -90,7 +99,11 @@ impl<S: Sync> FromRequest<S> for WebSocketUpgrade {
         config.max_frame_size = Some(64 * 1024);
         config.write_buffer_size = 16 * 1024;
         config.max_write_buffer_size = 256 * 1024;
-        Ok(WebSocketUpgrade { key, on_upgrade, config })
+        Ok(WebSocketUpgrade {
+            key,
+            on_upgrade,
+            config,
+        })
     }
 }
 
@@ -110,7 +123,10 @@ impl WebSocketUpgrade {
 
     /// Switches to typed JSON messages.
     pub fn typed<In, Out>(self) -> TypedUpgrade<In, Out> {
-        TypedUpgrade { inner: self, _t: PhantomData }
+        TypedUpgrade {
+            inner: self,
+            _t: PhantomData,
+        }
     }
 
     /// Completes the handshake and runs `f` with the raw socket in a new task.
@@ -121,7 +137,8 @@ impl WebSocketUpgrade {
     {
         let Some(on_upgrade) = self.on_upgrade else {
             // In-process test client / HTTP/2 without extended CONNECT: no upgrade possible.
-            return rejection::bad_request("upgrade_unavailable", "connection cannot be upgraded").into_response();
+            return rejection::bad_request("upgrade_unavailable", "connection cannot be upgraded")
+                .into_response();
         };
         let accept = tungstenite::handshake::derive_accept_key(self.key.as_bytes());
         let config = self.config;
@@ -129,7 +146,8 @@ impl WebSocketUpgrade {
             match on_upgrade.await {
                 Ok(upgraded) => {
                     let io = hyper_util::rt::TokioIo::new(upgraded);
-                    let socket = WebSocketStream::from_raw_socket(io, Role::Server, Some(config)).await;
+                    let socket =
+                        WebSocketStream::from_raw_socket(io, Role::Server, Some(config)).await;
                     f(socket).await;
                 }
                 Err(e) => tracing::debug!(error = %e, "websocket upgrade failed"),
@@ -169,7 +187,12 @@ where
         F: FnOnce(TypedSocket<In, Out>) -> Fut + Send + 'static,
         Fut: Future<Output = ()> + Send + 'static,
     {
-        self.inner.on_upgrade(move |raw| f(TypedSocket { raw, _t: PhantomData }))
+        self.inner.on_upgrade(move |raw| {
+            f(TypedSocket {
+                raw,
+                _t: PhantomData,
+            })
+        })
     }
 }
 

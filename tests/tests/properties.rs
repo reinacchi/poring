@@ -46,10 +46,16 @@ async fn form(Form(_b): Form<Q>) -> &'static str {
 poring_app! { Fuzz { routes: [u, s, f, q, j, form] } }
 
 fn rt() -> tokio::runtime::Runtime {
-    tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap()
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
 }
 
-const ENCODE: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC.remove(b'-').remove(b'_').remove(b'.');
+const ENCODE: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'_')
+    .remove(b'.');
 
 proptest! {
     #![proptest_config(ProptestConfig { cases: 256, .. ProptestConfig::default() })]
@@ -112,15 +118,24 @@ proptest! {
     }
 
     #[test]
-    fn rate_limiter_memory_is_bounded(keys in proptest::collection::vec(any::<u32>(), 1..2000)) {
-        use poring::policy::enforce::{RateKeyValue, RateLimiter};
-        use poring::policy::{RateKey, RateLimitSpec};
+    fn rate_limiter_memory_is_bounded_without_resetting_quotas(
+        keys in proptest::collection::vec(0u32..600, 1..3000),
+    ) {
+        use poring::policy::RateLimitDecision;
+        use poring::policy::rate_limit::{RateKeyValue, RateLimiter, RateRule};
         let rl = RateLimiter::new(256);
-        let spec = RateLimitSpec { requests: 1, per_ms: 60_000, key: RateKey::Ip };
+        let rule = RateRule { scope: 0, limit: 1, window_ns: 60_000_000_000 };
         let now = std::time::Instant::now();
+        let mut admitted = std::collections::HashMap::<u32, u32>::new();
         for k in keys {
-            let _ = rl.check(0, RateKeyValue::Subject(k.to_string()), &spec, now);
+            let key = RateKeyValue::Subject(k.to_string());
+            if let RateLimitDecision::Allowed(_) = rl.check_one(rule, &key, now) {
+                *admitted.entry(k).or_default() += 1;
+            }
+            prop_assert!(rl.len() <= 256, "{}", rl.len());
         }
-        prop_assert!(rl.len() <= 256 + 16, "{}", rl.len());
+        // Within one window no key is ever admitted twice, however many other keys flood
+        // the table: active buckets are never evicted and recreated as full.
+        prop_assert!(admitted.values().all(|n| *n <= 1), "{:?}", admitted);
     }
 }

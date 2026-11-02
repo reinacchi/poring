@@ -21,30 +21,44 @@ struct In {
 #[derive(Serialize)]
 #[serde(untagged)]
 enum Out {
-    Echo { echo: String, n: u64 },
-    Error { error: &'static str, issues: Vec<poring::ValidationIssue> },
+    Echo {
+        echo: String,
+        n: u64,
+    },
+    Error {
+        error: &'static str,
+        issues: Vec<poring::ValidationIssue>,
+    },
 }
 
 #[poring::ws("/echo")]
 async fn echo(ws: WebSocketUpgrade) -> Response {
-    ws.max_message_size(16 * 1024).typed::<In, Out>().on_upgrade(|mut sock| async move {
-        let mut n = 0;
-        while let Some(msg) = sock.recv().await {
-            let reply = match msg {
-                Ok(m) => {
-                    n += 1;
-                    Out::Echo { echo: m.text, n }
+    ws.max_message_size(16 * 1024)
+        .typed::<In, Out>()
+        .on_upgrade(|mut sock| async move {
+            let mut n = 0;
+            while let Some(msg) = sock.recv().await {
+                let reply = match msg {
+                    Ok(m) => {
+                        n += 1;
+                        Out::Echo { echo: m.text, n }
+                    }
+                    Err(WsError::Invalid(issues)) => Out::Error {
+                        error: "invalid",
+                        issues,
+                    },
+                    Err(WsError::Decode(_)) => Out::Error {
+                        error: "malformed json",
+                        issues: vec![],
+                    },
+                    Err(WsError::Socket(_)) => break,
+                };
+                // `send` waits when the client reads slowly (bounded write buffer).
+                if sock.send(&reply).await.is_err() {
+                    break;
                 }
-                Err(WsError::Invalid(issues)) => Out::Error { error: "invalid", issues },
-                Err(WsError::Decode(_)) => Out::Error { error: "malformed json", issues: vec![] },
-                Err(WsError::Socket(_)) => break,
-            };
-            // `send` waits when the client reads slowly (bounded write buffer).
-            if sock.send(&reply).await.is_err() {
-                break;
             }
-        }
-    })
+        })
 }
 
 poring_app! {

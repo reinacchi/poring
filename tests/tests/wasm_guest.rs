@@ -3,7 +3,9 @@ use poring::wasm::{GuestConfig, GuestSlot, WasmHost};
 
 #[tokio::test]
 async fn echo_guest_roundtrip() {
-    let bytes = GuestSpec::echo("echo", "1.0.0").build().expect("componentise");
+    let bytes = GuestSpec::echo("echo", "1.0.0")
+        .build()
+        .expect("componentise");
     let host = WasmHost::new().unwrap();
     let slot = GuestSlot::new(host, GuestConfig::new("echo"), &bytes).expect("preflight");
     let req = poring::dynamic::DynRequest {

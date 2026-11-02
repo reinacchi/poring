@@ -38,8 +38,12 @@ pub fn componentise(core: &[u8]) -> Result<Vec<u8>, KitError> {
     };
     if !has_component_type_section(&module) {
         let mut resolve = wit_parser::Resolve::default();
-        let pkg = resolve.push_str("poring-plugin.wit", WIT).map_err(|e| KitError::Component(e.to_string()))?;
-        let world = resolve.select_world(&[pkg], Some("guest")).map_err(|e| KitError::Component(e.to_string()))?;
+        let pkg = resolve
+            .push_str("poring-plugin.wit", WIT)
+            .map_err(|e| KitError::Component(e.to_string()))?;
+        let world = resolve
+            .select_world(&[pkg], Some("guest"))
+            .map_err(|e| KitError::Component(e.to_string()))?;
         wit_component::embed_component_metadata(
             &mut module,
             &resolve,
@@ -185,7 +189,10 @@ impl GuestSpec {
         let mut w = String::new();
         let _ = writeln!(w, "(module");
         if imports_log {
-            let _ = writeln!(w, "  (import \"poring:plugin/log@0.1.0\" \"write\" (func $log (param i32 i32 i32)))");
+            let _ = writeln!(
+                w,
+                "  (import \"poring:plugin/log@0.1.0\" \"write\" (func $log (param i32 i32 i32)))"
+            );
         }
         let _ = writeln!(w, "  (memory (export \"memory\") 1)");
         let _ = writeln!(w, "  (global $heap (mut i32) (i32.const 4096))");
@@ -205,19 +212,30 @@ impl GuestSpec {
     (local.get $p))"#
         );
         let _ = writeln!(w, "  (data (i32.const {NAME}) \"{}\")", bytes_lit(name));
-        let _ = writeln!(w, "  (data (i32.const {VERSION}) \"{}\")", bytes_lit(version));
+        let _ = writeln!(
+            w,
+            "  (data (i32.const {VERSION}) \"{}\")",
+            bytes_lit(version)
+        );
         for (o, b) in &caps_strings {
             let _ = writeln!(w, "  (data (i32.const {o}) \"{}\")", bytes_lit(b));
         }
         if !caps_list.is_empty() {
-            let _ = writeln!(w, "  (data (i32.const {CAPS_LIST}) \"{}\")", bytes_lit(&caps_list));
+            let _ = writeln!(
+                w,
+                "  (data (i32.const {CAPS_LIST}) \"{}\")",
+                bytes_lit(&caps_list)
+            );
         }
         let _ = writeln!(w, "  (data (i32.const {INFO}) \"{}\")", bytes_lit(&info));
         let _ = writeln!(w, "  (data (i32.const {HDR_NAME}) \"content-type\")");
         let _ = writeln!(w, "  (data (i32.const {HDR_VALUE}) \"text/plain\")");
         let _ = writeln!(w, "  (data (i32.const {HDR_REC}) \"{}\")", bytes_lit(&hdr));
         let _ = writeln!(w, "  (data (i32.const {PREFIX}) \"{}\")", bytes_lit(prefix));
-        let _ = writeln!(w, "  (func (export \"poring:plugin/handler@0.1.0#info\") (result i32) (i32.const {INFO}))");
+        let _ = writeln!(
+            w,
+            "  (func (export \"poring:plugin/handler@0.1.0#info\") (result i32) (i32.const {INFO}))"
+        );
         let echo = format!(
             r#"    (local.set $len (i32.add (i32.const {plen}) (local.get $path_len)))
     (local.set $buf (call $realloc (i32.const 0) (i32.const 0) (i32.const 1) (local.get $len)))
@@ -239,7 +257,10 @@ impl GuestSpec {
             r20 = RESULT + 20,
         );
         let probe_len = "/__poring/probe".len();
-        let echo_stmt = echo.trim_end().trim_end_matches(&format!("(i32.const {RESULT})")).to_owned();
+        let echo_stmt = echo
+            .trim_end()
+            .trim_end_matches(&format!("(i32.const {RESULT})"))
+            .to_owned();
         let guard = if self.probe_safe && self.behaviour != Behaviour::Echo {
             format!(
                 "    (if (i32.eq (local.get $path_len) (i32.const {probe_len}))\n      (then\n{echo_stmt}\n      (return (i32.const {RESULT}))))\n"

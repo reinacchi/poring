@@ -60,7 +60,9 @@ pub trait FromRequest<S>: ExtractorMeta + Sized {
     type Rejection: IntoResponse;
 
     /// Performs extraction.
-    fn from_request(cx: &mut Ctx<'_, S>) -> impl Future<Output = Result<Self, Self::Rejection>> + Send;
+    fn from_request(
+        cx: &mut Ctx<'_, S>,
+    ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send;
 }
 
 /// The authenticated principal, converted to `T`.
@@ -126,7 +128,12 @@ impl<T> ExtractorMeta for Extension<T> {
 impl<S: Sync, T: Clone + Send + Sync + 'static> FromRequest<S> for Extension<T> {
     type Rejection = ApiError;
     async fn from_request(cx: &mut Ctx<'_, S>) -> Result<Self, ApiError> {
-        cx.parts.extensions.get::<T>().cloned().map(Extension).ok_or_else(|| rejection::internal("missing_extension"))
+        cx.parts
+            .extensions
+            .get::<T>()
+            .cloned()
+            .map(Extension)
+            .ok_or_else(|| rejection::internal("missing_extension"))
     }
 }
 
@@ -153,6 +160,21 @@ meta_request! {
 impl IntoResponse for std::convert::Infallible {
     fn into_response(self) -> crate::Response {
         match self {}
+    }
+}
+
+impl ExtractorMeta for crate::policy::RateLimitStatus {
+    const KIND: ExtractorKind = ExtractorKind::Request;
+}
+
+/// The rate-limit status recorded when the request was admitted (no second token is
+/// taken). Use `Option<RateLimitStatus>` on routes that might not be rate limited.
+impl<S: Sync> FromRequest<S> for crate::policy::RateLimitStatus {
+    type Rejection = ApiError;
+    async fn from_request(cx: &mut Ctx<'_, S>) -> Result<Self, ApiError> {
+        cx.rate_limit()
+            .copied()
+            .ok_or_else(|| rejection::internal("route_not_rate_limited"))
     }
 }
 
@@ -188,10 +210,14 @@ pub async fn read_body<S>(cx: &mut Ctx<'_, S>) -> Result<Bytes, ApiError> {
     let Some(body) = cx.take_body() else {
         return Err(rejection::internal("body_already_taken"));
     };
-    crate::body::collect_limited(body, limit).await.map_err(|e| match e {
-        crate::body::CollectError::TooLarge { limit } => rejection::payload_too_large(limit),
-        crate::body::CollectError::Read(_) => rejection::bad_request("body_read_failed", "failed to read request body"),
-    })
+    crate::body::collect_limited(body, limit)
+        .await
+        .map_err(|e| match e {
+            crate::body::CollectError::TooLarge { limit } => rejection::payload_too_large(limit),
+            crate::body::CollectError::Read(_) => {
+                rejection::bad_request("body_read_failed", "failed to read request body")
+            }
+        })
 }
 
 impl<T: ExtractorMeta> ExtractorMeta for Option<T> {

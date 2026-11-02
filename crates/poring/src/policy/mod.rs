@@ -11,10 +11,14 @@
 pub mod auth;
 pub mod check;
 pub mod enforce;
+pub mod proxy;
+pub mod rate_limit;
 pub mod resolve;
 
 pub use auth::{AuthError, AuthRequest, Authenticator, Credential, Identity, NoAuth};
 pub use owned::{Cors, Policy};
+pub use proxy::TrustedProxies;
+pub use rate_limit::{RateLimit, RateLimitDecision, RateLimitStatus, RateScope};
 pub use resolve::{CsrfMode, EffectivePolicy, resolve};
 
 mod owned;
@@ -79,15 +83,48 @@ impl RateKey {
     }
 }
 
-/// A token-bucket rate limit: `requests` per `per_ms` milliseconds.
+/// A token-bucket rate limit: a burst of `requests` refilled continuously over `per_ms`
+/// milliseconds (see [`rate_limit`] for the exact semantics).
+///
+/// Declared by `policy(rate_limit = ..)` in macros, or by [`RateLimit`] and
+/// [`Policy::rate_limit`] in the fluent API. Construct it with [`RateLimitSpec::new`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RateLimitSpec {
-    /// Bucket capacity / requests per window.
+    /// Burst capacity and requests per window.
     pub requests: u32,
-    /// Window length.
+    /// Window length in milliseconds.
     pub per_ms: u64,
     /// Partition key.
     pub key: RateKey,
+    /// Bucket sharing.
+    pub scope: RateScope,
+    /// Whether responses carry `RateLimit`/`RateLimit-Policy` headers.
+    pub headers: bool,
+}
+
+impl RateLimitSpec {
+    /// A route-scoped limit without quota headers.
+    pub const fn new(requests: u32, per_ms: u64, key: RateKey) -> Self {
+        RateLimitSpec {
+            requests,
+            per_ms,
+            key,
+            scope: RateScope::Route,
+            headers: false,
+        }
+    }
+
+    /// Sets the bucket scope.
+    pub const fn with_scope(mut self, scope: RateScope) -> Self {
+        self.scope = scope;
+        self
+    }
+
+    /// Enables or disables quota headers.
+    pub const fn with_headers(mut self, headers: bool) -> Self {
+        self.headers = headers;
+        self
+    }
 }
 
 /// One level (app, group/plugin, or route) of policy declaration.

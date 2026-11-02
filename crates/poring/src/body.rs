@@ -37,7 +37,11 @@ impl fmt::Debug for ReqBody {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ReqBody::Incoming(_) => f.write_str("ReqBody::Incoming"),
-            ReqBody::Full(b) => write!(f, "ReqBody::Full({} bytes)", b.as_ref().map_or(0, Bytes::len)),
+            ReqBody::Full(b) => write!(
+                f,
+                "ReqBody::Full({} bytes)",
+                b.as_ref().map_or(0, Bytes::len)
+            ),
         }
     }
 }
@@ -46,7 +50,10 @@ impl http_body::Body for ReqBody {
     type Data = Bytes;
     type Error = BoxError;
 
-    fn poll_frame(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<Frame<Bytes>, BoxError>>> {
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Bytes>, BoxError>>> {
         match self.get_mut() {
             ReqBody::Incoming(b) => Pin::new(b).poll_frame(cx).map_err(Into::into),
             ReqBody::Full(b) => Poll::Ready(b.take().map(|d| Ok(Frame::data(d)))),
@@ -89,7 +96,11 @@ pub async fn collect_limited(body: ReqBody, limit: u64) -> Result<Bytes, Collect
     match body {
         ReqBody::Full(b) => {
             let b = b.unwrap_or_default();
-            if b.len() as u64 > limit { Err(CollectError::TooLarge { limit }) } else { Ok(b) }
+            if b.len() as u64 > limit {
+                Err(CollectError::TooLarge { limit })
+            } else {
+                Ok(b)
+            }
         }
         ReqBody::Incoming(inc) => {
             let limited = http_body_util::Limited::new(inc, limit_usize);
@@ -156,13 +167,19 @@ impl Default for Body {
 impl Body {
     /// Empty body.
     pub const fn empty() -> Self {
-        Body { inner: Inner::Full(None), on_done: None }
+        Body {
+            inner: Inner::Full(None),
+            on_done: None,
+        }
     }
 
     /// In-memory body.
     pub fn full(b: impl Into<Bytes>) -> Self {
         let b = b.into();
-        Body { inner: Inner::Full(if b.is_empty() { None } else { Some(b) }), on_done: None }
+        Body {
+            inner: Inner::Full(if b.is_empty() { None } else { Some(b) }),
+            on_done: None,
+        }
     }
 
     /// Wraps any `http_body::Body`.
@@ -171,14 +188,23 @@ impl Body {
         B: http_body::Body<Data = Bytes> + Send + 'static,
         B::Error: Into<BoxError>,
     {
-        Body { inner: Inner::Boxed(Box::pin(b.map_err(Into::into))), on_done: None }
+        Body {
+            inner: Inner::Boxed(Box::pin(b.map_err(Into::into))),
+            on_done: None,
+        }
     }
 
     /// A streaming body fed through a bounded channel of `capacity` chunks. Sending
     /// awaits when the client is slow, providing backpressure.
     pub fn channel(capacity: usize) -> (mpsc::Sender<Bytes>, Body) {
         let (tx, rx) = mpsc::channel(capacity.max(1));
-        (tx, Body { inner: Inner::Channel(rx), on_done: None })
+        (
+            tx,
+            Body {
+                inner: Inner::Channel(rx),
+                on_done: None,
+            },
+        )
     }
 
     /// Registers a callback run once when the body completes, errors or is dropped.
@@ -228,7 +254,10 @@ impl Body {
         }
     }
 
-    fn poll_frame_inner(&mut self, cx: &mut Context<'_>) -> Poll<Option<Result<Frame<Bytes>, BoxError>>> {
+    fn poll_frame_inner(
+        &mut self,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Bytes>, BoxError>>> {
         let res = match &mut self.inner {
             Inner::Full(b) => Poll::Ready(b.take().map(|d| Ok(Frame::data(d)))),
             Inner::Channel(rx) => rx.poll_recv(cx).map(|o| o.map(|d| Ok(Frame::data(d)))),
@@ -237,7 +266,9 @@ impl Body {
         match &res {
             Poll::Ready(None) => self.finish(BodyEnd::Complete),
             Poll::Ready(Some(Err(_))) => self.finish(BodyEnd::Error),
-            Poll::Ready(Some(Ok(_))) if self.is_end_stream_inner() => self.finish(BodyEnd::Complete),
+            Poll::Ready(Some(Ok(_))) if self.is_end_stream_inner() => {
+                self.finish(BodyEnd::Complete)
+            }
             _ => {}
         }
         res
@@ -254,7 +285,11 @@ impl Body {
 
 impl Drop for Body {
     fn drop(&mut self) {
-        let end = if self.is_end_stream_inner() { BodyEnd::Complete } else { BodyEnd::Dropped };
+        let end = if self.is_end_stream_inner() {
+            BodyEnd::Complete
+        } else {
+            BodyEnd::Dropped
+        };
         self.finish(end);
     }
 }
@@ -263,7 +298,10 @@ impl http_body::Body for Body {
     type Data = Bytes;
     type Error = BoxError;
 
-    fn poll_frame(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<Frame<Bytes>, BoxError>>> {
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Bytes>, BoxError>>> {
         self.get_mut().poll_frame_inner(cx)
     }
 

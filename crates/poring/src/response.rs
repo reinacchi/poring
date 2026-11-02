@@ -222,7 +222,9 @@ impl<T: IntoResponse, const N: usize> IntoResponse for ([(HeaderName, HeaderValu
     }
 }
 
-impl<T: IntoResponse, const N: usize> IntoResponse for (StatusCode, [(HeaderName, HeaderValue); N], T) {
+impl<T: IntoResponse, const N: usize> IntoResponse
+    for (StatusCode, [(HeaderName, HeaderValue); N], T)
+{
     fn into_response(self) -> Response {
         let mut r = self.2.into_response();
         *r.status_mut() = self.0;
@@ -306,7 +308,8 @@ impl<T: serde::Serialize> IntoResponse for Json<T> {
             Ok(v) => with_type(Body::from(v), &APPLICATION_JSON),
             Err(e) => {
                 tracing::error!(error = %e, "failed to serialise JSON response");
-                crate::error::ApiError::internal_message("response serialisation failed").into_response()
+                crate::error::ApiError::internal_message("response serialisation failed")
+                    .into_response()
             }
         }
     }
@@ -314,7 +317,11 @@ impl<T: serde::Serialize> IntoResponse for Json<T> {
     fn __poring_describe(reg: &mut SchemaRegistry) -> Vec<ResponseDoc> {
         let _ = reg;
         // The body type is only known to be `Serialize` here, so its schema is not documented.
-        vec![ResponseDoc { status: 200, content_type: Some("application/json"), schema: None }]
+        vec![ResponseDoc {
+            status: 200,
+            content_type: Some("application/json"),
+            schema: None,
+        }]
     }
 }
 
@@ -334,7 +341,11 @@ pub mod respond {
             match self.0.take() {
                 Some(Ok(t)) => (t.into_response(), false),
                 Some(Err(e)) => (e.into_response(), true),
-                None => (crate::error::ApiError::internal_message("response already taken").into_response(), true),
+                None => (
+                    crate::error::ApiError::internal_message("response already taken")
+                        .into_response(),
+                    true,
+                ),
             }
         }
     }
@@ -351,7 +362,11 @@ pub mod respond {
         {
             match self.0.take() {
                 Some(t) => (t.into_response(), false),
-                None => (crate::error::ApiError::internal_message("response already taken").into_response(), true),
+                None => (
+                    crate::error::ApiError::internal_message("response already taken")
+                        .into_response(),
+                    true,
+                ),
             }
         }
     }
@@ -373,8 +388,16 @@ pub mod describe {
         fn describe(reg: &mut SchemaRegistry) -> Vec<ResponseDoc>;
     }
 
-    fn doc(status: u16, ct: Option<&'static str>, schema: Option<serde_json::Value>) -> Vec<ResponseDoc> {
-        vec![ResponseDoc { status, content_type: ct, schema }]
+    fn doc(
+        status: u16,
+        ct: Option<&'static str>,
+        schema: Option<serde_json::Value>,
+    ) -> Vec<ResponseDoc> {
+        vec![ResponseDoc {
+            status,
+            content_type: ct,
+            schema,
+        }]
     }
 
     impl DescribeResponse for &'static str {
@@ -399,7 +422,11 @@ pub mod describe {
     }
     impl DescribeResponse for Bytes {
         fn describe(_: &mut SchemaRegistry) -> Vec<ResponseDoc> {
-            doc(200, Some("application/octet-stream"), Some(json!({"type": "string", "format": "binary"})))
+            doc(
+                200,
+                Some("application/octet-stream"),
+                Some(json!({"type": "string", "format": "binary"})),
+            )
         }
     }
     impl DescribeResponse for Vec<u8> {

@@ -55,11 +55,26 @@ pub struct ApiError {
 
 impl ApiError {
     /// Creates an error.
-    pub fn new(status: StatusCode, code: &'static str, message: impl Into<Cow<'static, str>>) -> Self {
-        ApiError { status, code, message: message.into(), issues: Vec::new(), headers: Vec::new(), framework: false }
+    pub fn new(
+        status: StatusCode,
+        code: &'static str,
+        message: impl Into<Cow<'static, str>>,
+    ) -> Self {
+        ApiError {
+            status,
+            code,
+            message: message.into(),
+            issues: Vec::new(),
+            headers: Vec::new(),
+            framework: false,
+        }
     }
 
-    pub(crate) fn framework(status: StatusCode, code: &'static str, message: impl Into<Cow<'static, str>>) -> Self {
+    pub(crate) fn framework(
+        status: StatusCode,
+        code: &'static str,
+        message: impl Into<Cow<'static, str>>,
+    ) -> Self {
         let mut e = Self::new(status, code, message);
         e.framework = true;
         e
@@ -88,11 +103,19 @@ impl ApiError {
     /// `500`, logging `source` server-side and returning a generic message.
     pub fn internal(source: impl std::fmt::Display) -> Self {
         tracing::error!(error = %source, "internal error");
-        Self::new(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal server error")
+        Self::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal",
+            "internal server error",
+        )
     }
     pub(crate) fn internal_message(msg: &'static str) -> Self {
         tracing::error!(error = msg, "internal error");
-        Self::framework(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal server error")
+        Self::framework(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal",
+            "internal server error",
+        )
     }
 
     /// Adds validation issues.
@@ -110,7 +133,13 @@ impl ApiError {
 
 impl std::fmt::Display for ApiError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} {}: {}", self.status.as_u16(), self.code, self.message)
+        write!(
+            f,
+            "{} {}: {}",
+            self.status.as_u16(),
+            self.code,
+            self.message
+        )
     }
 }
 
@@ -143,17 +172,23 @@ impl IntoResponse for ApiError {
         let body = serde_json::to_vec(&doc).unwrap_or_else(|_| b"{\"error\":{}}".to_vec());
         let mut r = http::Response::new(Body::from(body));
         *r.status_mut() = self.status;
-        r.headers_mut().insert(CONTENT_TYPE, APPLICATION_JSON.clone());
+        r.headers_mut()
+            .insert(CONTENT_TYPE, APPLICATION_JSON.clone());
         for (k, v) in self.headers {
             r.headers_mut().insert(k, v);
         }
         if self.framework {
-            r.extensions_mut().insert(FrameworkError { status: self.status, code: self.code });
+            r.extensions_mut().insert(FrameworkError {
+                status: self.status,
+                code: self.code,
+            });
         }
         r
     }
 
-    fn __poring_describe(reg: &mut crate::schema::SchemaRegistry) -> Vec<crate::descriptor::ResponseDoc> {
+    fn __poring_describe(
+        reg: &mut crate::schema::SchemaRegistry,
+    ) -> Vec<crate::descriptor::ResponseDoc> {
         <ApiError as crate::response::describe::DescribeResponse>::describe(reg)
     }
 }
@@ -168,8 +203,15 @@ pub mod rejection {
     }
     /// 401 with `WWW-Authenticate`.
     pub fn unauthenticated() -> ApiError {
-        ApiError::framework(StatusCode::UNAUTHORIZED, "unauthenticated", "authentication required")
-            .with_header(http::header::WWW_AUTHENTICATE, HeaderValue::from_static("Bearer"))
+        ApiError::framework(
+            StatusCode::UNAUTHORIZED,
+            "unauthenticated",
+            "authentication required",
+        )
+        .with_header(
+            http::header::WWW_AUTHENTICATE,
+            HeaderValue::from_static("Bearer"),
+        )
     }
     /// 403.
     pub fn forbidden(code: &'static str, message: impl Into<Cow<'static, str>>) -> ApiError {
@@ -177,12 +219,20 @@ pub mod rejection {
     }
     /// 404.
     pub fn not_found() -> ApiError {
-        ApiError::framework(StatusCode::NOT_FOUND, "not_found", "no route matches the request path")
+        ApiError::framework(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "no route matches the request path",
+        )
     }
     /// 405 with `Allow`.
     pub fn method_not_allowed(allow: HeaderValue) -> ApiError {
-        ApiError::framework(StatusCode::METHOD_NOT_ALLOWED, "method_not_allowed", "method not allowed for this path")
-            .with_header(http::header::ALLOW, allow)
+        ApiError::framework(
+            StatusCode::METHOD_NOT_ALLOWED,
+            "method_not_allowed",
+            "method not allowed for this path",
+        )
+        .with_header(http::header::ALLOW, allow)
     }
     /// 413.
     pub fn payload_too_large(limit: u64) -> ApiError {
@@ -202,18 +252,40 @@ pub mod rejection {
     }
     /// 422 with issues.
     pub fn validation(issues: Vec<ValidationIssue>) -> ApiError {
-        ApiError::framework(StatusCode::UNPROCESSABLE_ENTITY, "validation_failed", "request validation failed")
-            .with_issues(issues)
+        ApiError::framework(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation_failed",
+            "request validation failed",
+        )
+        .with_issues(issues)
     }
     /// 429 with `Retry-After` (seconds, rounded up).
     pub fn too_many_requests(retry_after: std::time::Duration) -> ApiError {
         let secs = retry_after.as_secs() + u64::from(retry_after.subsec_nanos() > 0);
-        ApiError::framework(StatusCode::TOO_MANY_REQUESTS, "rate_limited", "too many requests")
-            .with_header(http::header::RETRY_AFTER, HeaderValue::from(secs.max(1)))
+        ApiError::framework(
+            StatusCode::TOO_MANY_REQUESTS,
+            "rate_limited",
+            "too many requests",
+        )
+        .with_header(http::header::RETRY_AFTER, HeaderValue::from(secs.max(1)))
+    }
+    /// 503 when the rate limiter's bucket table is full of active clients (fail closed).
+    pub fn rate_limiter_saturated(retry_after: std::time::Duration) -> ApiError {
+        let secs = retry_after.as_secs() + u64::from(retry_after.subsec_nanos() > 0);
+        ApiError::framework(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "rate_limiter_saturated",
+            "server is at its rate-limit tracking capacity",
+        )
+        .with_header(http::header::RETRY_AFTER, HeaderValue::from(secs.max(1)))
     }
     /// 503 for handler timeouts.
     pub fn timeout() -> ApiError {
-        ApiError::framework(StatusCode::SERVICE_UNAVAILABLE, "timeout", "request timed out")
+        ApiError::framework(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "timeout",
+            "request timed out",
+        )
     }
     /// 503 for unavailable dependencies.
     pub fn unavailable(message: impl Into<Cow<'static, str>>) -> ApiError {
@@ -222,6 +294,10 @@ pub mod rejection {
     /// 500 for missing internal wiring (should be unreachable for verified apps).
     pub fn internal(code: &'static str) -> ApiError {
         tracing::error!(code, "internal framework error");
-        ApiError::framework(StatusCode::INTERNAL_SERVER_ERROR, code, "internal server error")
+        ApiError::framework(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            code,
+            "internal server error",
+        )
     }
 }

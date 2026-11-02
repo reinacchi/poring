@@ -28,8 +28,15 @@ pub enum Method {
 
 impl Method {
     /// All methods, in table order.
-    pub const ALL: [Method; 7] =
-        [Method::Get, Method::Post, Method::Put, Method::Patch, Method::Delete, Method::Head, Method::Options];
+    pub const ALL: [Method; 7] = [
+        Method::Get,
+        Method::Post,
+        Method::Put,
+        Method::Patch,
+        Method::Delete,
+        Method::Head,
+        Method::Options,
+    ];
 
     /// Upper-case method name.
     pub const fn as_str(self) -> &'static str {
@@ -51,7 +58,10 @@ impl Method {
 
     /// Whether the method is "unsafe" in the RFC 9110 sense (state-changing).
     pub const fn is_unsafe(self) -> bool {
-        matches!(self, Method::Post | Method::Put | Method::Patch | Method::Delete)
+        matches!(
+            self,
+            Method::Post | Method::Put | Method::Patch | Method::Delete
+        )
     }
 
     /// Converts from an `http::Method`.
@@ -70,7 +80,9 @@ impl Method {
 
     /// Parses an upper-case method name.
     pub fn parse(s: &str) -> Option<Method> {
-        Method::ALL.into_iter().find(|m| m.as_str().eq_ignore_ascii_case(s))
+        Method::ALL
+            .into_iter()
+            .find(|m| m.as_str().eq_ignore_ascii_case(s))
     }
 }
 
@@ -264,7 +276,10 @@ impl AppDescriptor {
     /// Full path of route `i` (group prefix + route path).
     pub fn full_path(&self, i: usize) -> String {
         let r = &self.routes[i];
-        let prefix = r.group.map(|g| self.groups[g as usize].prefix).unwrap_or("");
+        let prefix = r
+            .group
+            .map(|g| self.groups[g as usize].prefix)
+            .unwrap_or("");
         join_path(prefix, r.desc.path)
     }
 }
@@ -275,5 +290,9 @@ pub fn join_path(prefix: &str, path: &str) -> String {
         return path.to_owned();
     }
     let prefix = prefix.trim_end_matches('/');
-    if path == "/" { prefix.to_owned() } else { format!("{prefix}{path}") }
+    if path == "/" {
+        prefix.to_owned()
+    } else {
+        format!("{prefix}{path}")
+    }
 }

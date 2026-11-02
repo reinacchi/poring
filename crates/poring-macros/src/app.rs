@@ -6,7 +6,8 @@ use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
 use syn::{
-    Attribute, Expr, ExprLit, Ident, Lit, LitStr, Meta, Path, Token, Type, Visibility, braced, bracketed, parenthesized,
+    Attribute, Expr, ExprLit, Ident, Lit, LitStr, Meta, Path, Token, Type, Visibility, braced,
+    bracketed, parenthesized,
 };
 
 use crate::policy::{Level, PolicyDecl, parse_policy, str_list};
@@ -15,7 +16,9 @@ use crate::util::{err, pretty, validate_prefix};
 fn parse_path_list(input: ParseStream<'_>) -> syn::Result<Vec<Path>> {
     let content;
     bracketed!(content in input);
-    Ok(Punctuated::<Path, Token![,]>::parse_terminated(&content)?.into_iter().collect())
+    Ok(Punctuated::<Path, Token![,]>::parse_terminated(&content)?
+        .into_iter()
+        .collect())
 }
 
 /// Parses `name(...)` or `name!(...)` and returns the inner metas.
@@ -45,7 +48,10 @@ impl Parse for GroupInput {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
         let kw: Ident = input.parse()?;
         if kw != "group" {
-            return Err(err(kw.span(), "expected `group(\"/prefix\", ...) { routes: [...] }`"));
+            return Err(err(
+                kw.span(),
+                "expected `group(\"/prefix\", ...) { routes: [...] }`",
+            ));
         }
         let args;
         parenthesized!(args in input);
@@ -57,11 +63,17 @@ impl Parse for GroupInput {
             args.parse::<Token![,]>()?;
             let items = Punctuated::<Meta, Token![,]>::parse_terminated(&args)?;
             for m in items {
-                let key = m.path().get_ident().map(|i| i.to_string()).unwrap_or_default();
+                let key = m
+                    .path()
+                    .get_ident()
+                    .map(|i| i.to_string())
+                    .unwrap_or_default();
                 match (key.as_str(), &m) {
                     ("policy", Meta::List(l)) => {
-                        let inner = l.parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)?;
-                        policy = parse_policy(&inner.into_iter().collect::<Vec<_>>(), Level::Group)?;
+                        let inner =
+                            l.parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)?;
+                        policy =
+                            parse_policy(&inner.into_iter().collect::<Vec<_>>(), Level::Group)?;
                     }
                     ("before" | "after", Meta::NameValue(nv)) => {
                         let paths = match &nv.value {
@@ -75,9 +87,18 @@ impl Parse for GroupInput {
                                 .collect::<syn::Result<Vec<_>>>()?,
                             _ => return Err(err(nv.value.span(), "expected `[hook, ..]`")),
                         };
-                        if key == "before" { before = paths } else { after = paths }
+                        if key == "before" {
+                            before = paths
+                        } else {
+                            after = paths
+                        }
                     }
-                    _ => return Err(err(m.span(), "expected `policy(..)`, `before = [..]` or `after = [..]`")),
+                    _ => {
+                        return Err(err(
+                            m.span(),
+                            "expected `policy(..)`, `before = [..]` or `after = [..]`",
+                        ));
+                    }
                 }
             }
         }
@@ -90,13 +111,22 @@ impl Parse for GroupInput {
             if k == "routes" {
                 routes = parse_path_list(&body)?;
             } else {
-                return Err(err(k.span(), "a group body supports `routes: [...]` (nested groups are not supported)"));
+                return Err(err(
+                    k.span(),
+                    "a group body supports `routes: [...]` (nested groups are not supported)",
+                ));
             }
             if body.peek(Token![,]) {
                 body.parse::<Token![,]>()?;
             }
         }
-        Ok(GroupInput { prefix, policy, before, after, routes })
+        Ok(GroupInput {
+            prefix,
+            policy,
+            before,
+            after,
+            routes,
+        })
     }
 }
 
@@ -160,7 +190,9 @@ fn parse_app(input: ParseStream<'_>, plugin: bool) -> syn::Result<AppInput> {
             ("groups", false) => {
                 let content;
                 bracketed!(content in body);
-                a.groups = Punctuated::<GroupInput, Token![,]>::parse_terminated(&content)?.into_iter().collect();
+                a.groups = Punctuated::<GroupInput, Token![,]>::parse_terminated(&content)?
+                    .into_iter()
+                    .collect();
             }
             ("plugins", false) => a.plugins = parse_path_list(&body)?,
             ("prefix", true) => a.prefix = Some(body.parse()?),
@@ -170,7 +202,10 @@ fn parse_app(input: ParseStream<'_>, plugin: bool) -> syn::Result<AppInput> {
                 } else {
                     "state, auth, defaults, cors, before, after, routes, groups, plugins"
                 };
-                return Err(err(key.span(), format!("unknown key `{k}` (expected one of: {expected})")));
+                return Err(err(
+                    key.span(),
+                    format!("unknown key `{k}` (expected one of: {expected})"),
+                ));
             }
         }
         if body.peek(Token![,]) {
@@ -201,7 +236,12 @@ struct CorsDecl {
 }
 
 fn parse_cors(items: &[Meta], span: Span) -> syn::Result<CorsDecl> {
-    let mut c = CorsDecl { origins: Vec::new(), credentials: false, headers: Vec::new(), max_age: 600 };
+    let mut c = CorsDecl {
+        origins: Vec::new(),
+        credentials: false,
+        headers: Vec::new(),
+        max_age: 600,
+    };
     for m in items {
         let Meta::NameValue(nv) = m else {
             return Err(err(
@@ -213,11 +253,15 @@ fn parse_cors(items: &[Meta], span: Span) -> syn::Result<CorsDecl> {
             Some("origins") => c.origins = str_list(&nv.value)?,
             Some("headers") => c.headers = str_list(&nv.value)?,
             Some("credentials") => match &nv.value {
-                Expr::Lit(ExprLit { lit: Lit::Bool(b), .. }) => c.credentials = b.value,
+                Expr::Lit(ExprLit {
+                    lit: Lit::Bool(b), ..
+                }) => c.credentials = b.value,
                 _ => return Err(err(nv.value.span(), "expected `true` or `false`")),
             },
             Some("max_age") => match &nv.value {
-                Expr::Lit(ExprLit { lit: Lit::Int(i), .. }) => c.max_age = i.base10_parse()?,
+                Expr::Lit(ExprLit {
+                    lit: Lit::Int(i), ..
+                }) => c.max_age = i.base10_parse()?,
                 _ => return Err(err(nv.value.span(), "expected seconds as an integer")),
             },
             _ => return Err(err(nv.path.span(), "unknown cors option")),
@@ -234,10 +278,16 @@ fn parse_cors(items: &[Meta], span: Span) -> syn::Result<CorsDecl> {
             ));
         }
         if o != "*" && !(o.starts_with("https://") || o.starts_with("http://")) {
-            return Err(err(span, format!("CORS origin `{o}` must be `*` or start with http:// or https://")));
+            return Err(err(
+                span,
+                format!("CORS origin `{o}` must be `*` or start with http:// or https://"),
+            ));
         }
         if o.ends_with('/') {
-            return Err(err(span, format!("CORS origin `{o}` must not end with `/` (origins have no path)")));
+            return Err(err(
+                span,
+                format!("CORS origin `{o}` must not end with `/` (origins have no path)"),
+            ));
         }
     }
     Ok(c)
@@ -247,7 +297,10 @@ fn check_unique(paths: &[&Path]) -> syn::Result<()> {
     for (i, a) in paths.iter().enumerate() {
         for b in &paths[i + 1..] {
             if pretty(a) == pretty(b) {
-                return Err(err(b.span(), format!("route `{}` is listed more than once", pretty(b))));
+                return Err(err(
+                    b.span(),
+                    format!("route `{}` is listed more than once", pretty(b)),
+                ));
             }
         }
     }
@@ -363,7 +416,6 @@ pub fn expand_app(input: TokenStream) -> syn::Result<TokenStream> {
         validate_prefix(&g.prefix.value()).map_err(|m| err(g.prefix.span(), m))?;
     }
 
-    // Static route list: ungrouped, then each group's routes.
     let mut route_refs = Vec::new();
     let mut arms = Vec::new();
     let gb = before_calls(&a.before, &st);
@@ -393,8 +445,10 @@ pub fn expand_app(input: TokenStream) -> syn::Result<TokenStream> {
                 break 'run r;
             }
         };
-        let route_handle = quote_spanned!(r.span()=> <#r as #p::RouteHandler<#st>>::handle(cx).await);
-        let route_after = quote_spanned!(r.span()=> <#r as #p::RouteHandler<#st>>::after(cx, &mut __res).await;);
+        let route_handle =
+            quote_spanned!(r.span()=> <#r as #p::RouteHandler<#st>>::handle(cx).await);
+        let route_after =
+            quote_spanned!(r.span()=> <#r as #p::RouteHandler<#st>>::after(cx, &mut __res).await;);
         arms.push(quote! {
             #i => ::std::boxed::Box::pin(async move {
                 let mut __res = 'run: {
@@ -417,7 +471,9 @@ pub fn expand_app(input: TokenStream) -> syn::Result<TokenStream> {
     let mut group_descs = Vec::new();
     for (gi, g) in a.groups.iter().enumerate() {
         let gname = g.prefix.value();
-        group_descs.push(group_tokens(&gname, &gname, &g.policy, &g.before, &g.after, false));
+        group_descs.push(group_tokens(
+            &gname, &gname, &g.policy, &g.before, &g.after, false,
+        ));
         for r in &g.routes {
             push_route(r, Some((gi as u16, g)), &mut route_refs, &mut arms);
         }
@@ -470,10 +526,15 @@ pub fn expand_app(input: TokenStream) -> syn::Result<TokenStream> {
     };
     let (au_ty, au_init) = match &a.auth {
         Some(_) => (quote!(#p::Missing), quote!(#p::Missing)),
-        None => (quote!(#p::Provided<#p::NoAuth>), quote!(#p::provided(#p::NoAuth))),
+        None => (
+            quote!(#p::Provided<#p::NoAuth>),
+            quote!(#p::provided(#p::NoAuth)),
+        ),
     };
-    let check = quote_spanned!(name.span()=> const _: () = #p::check_app(&<#name as #p::AppSpec>::APP););
-    let unused_label = quote!(#[allow(unreachable_code, unused_labels, clippy::diverging_sub_expression)]);
+    let check =
+        quote_spanned!(name.span()=> const _: () = #p::check_app(&<#name as #p::AppSpec>::APP););
+    let unused_label =
+        quote!(#[allow(unreachable_code, unused_labels, clippy::diverging_sub_expression)]);
 
     Ok(quote! {
         #(#attrs)*
@@ -584,9 +645,17 @@ pub fn expand_plugin(input: TokenStream) -> syn::Result<TokenStream> {
     let st = quote!(S);
     let gb = before_calls(&a.before, &st);
     let routes = &a.routes;
-    let route_bounds = routes.iter().map(|r| quote_spanned!(r.span()=> #r: #p::RouteHandler<S>,));
-    let hb = a.before.iter().map(|h| quote_spanned!(h.span()=> #h: #p::BeforeHook<S>,));
-    let ha = a.after.iter().map(|h| quote_spanned!(h.span()=> #h: #p::AfterHook<S>,));
+    let route_bounds = routes
+        .iter()
+        .map(|r| quote_spanned!(r.span()=> #r: #p::RouteHandler<S>,));
+    let hb = a
+        .before
+        .iter()
+        .map(|h| quote_spanned!(h.span()=> #h: #p::BeforeHook<S>,));
+    let ha = a
+        .after
+        .iter()
+        .map(|h| quote_spanned!(h.span()=> #h: #p::AfterHook<S>,));
     let run_arms = routes.iter().enumerate().map(|(i, r)| {
         let i = i as u16;
         quote_spanned! {r.span()=>

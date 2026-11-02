@@ -3,11 +3,17 @@
 use std::process::Command;
 
 fn manifest() -> String {
-    format!("{}/../../tests/snapshots/secure.manifest.json", env!("CARGO_MANIFEST_DIR"))
+    format!(
+        "{}/../../tests/snapshots/secure.manifest.json",
+        env!("CARGO_MANIFEST_DIR")
+    )
 }
 
 fn run(args: &[&str]) -> (bool, String, String) {
-    let out = Command::new(env!("CARGO_BIN_EXE_cargo-poring")).args(args).output().expect("run cargo-poring");
+    let out = Command::new(env!("CARGO_BIN_EXE_cargo-poring"))
+        .args(args)
+        .output()
+        .expect("run cargo-poring");
     (
         out.status.success(),
         String::from_utf8_lossy(&out.stdout).into_owned(),
@@ -20,7 +26,10 @@ fn explain_shows_merged_policy_and_checks() {
     let m = manifest();
     let (ok, out, err) = run(&["poring", "explain", "--manifest", &m, "POST /notes"]);
     assert!(ok, "{err}");
-    assert!(out.contains("| scopes (all required) | `notes:write` |"), "{out}");
+    assert!(
+        out.contains("| scopes (all required) | `notes:write` |"),
+        "{out}"
+    );
     assert!(out.contains("1. `post_notes.cors`"));
     assert!(out.contains("csrf=enforced"));
     assert!(out.contains("rate_limit=2/1000ms by principal <- route"));
@@ -32,8 +41,21 @@ fn explain_shows_merged_policy_and_checks() {
 #[test]
 fn graph_formats() {
     let m = manifest();
-    for (fmt, needle) in [("mermaid", "flowchart TD"), ("dot", "digraph"), ("json", "\"nodes\"")] {
-        let (ok, out, err) = run(&["poring", "graph", "--manifest", &m, "--route", "GET /notes", "--format", fmt]);
+    for (fmt, needle) in [
+        ("mermaid", "flowchart TD"),
+        ("dot", "digraph"),
+        ("json", "\"nodes\""),
+    ] {
+        let (ok, out, err) = run(&[
+            "poring",
+            "graph",
+            "--manifest",
+            &m,
+            "--route",
+            "GET /notes",
+            "--format",
+            fmt,
+        ]);
         assert!(ok, "{err}");
         assert!(out.contains(needle), "{fmt}: {out}");
         assert!(out.contains("get_notes"));

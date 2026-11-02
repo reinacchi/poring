@@ -24,7 +24,11 @@ impl SchemaRegistry {
     }
 
     /// Registers a named component (once; recursion-safe) and returns a `$ref` to it.
-    pub fn component(&mut self, name: &str, build: impl FnOnce(&mut SchemaRegistry) -> Value) -> Value {
+    pub fn component(
+        &mut self,
+        name: &str,
+        build: impl FnOnce(&mut SchemaRegistry) -> Value,
+    ) -> Value {
         if !self.components.contains_key(name) {
             self.components.insert(name.to_owned(), Value::Null);
             let s = build(self);
@@ -71,8 +75,16 @@ impl ValidationCx {
     /// Records an issue at the current location.
     pub fn issue(&mut self, rule: &'static str, message: impl Into<String>) {
         if self.issues.len() < MAX_ISSUES {
-            let path = if self.path.is_empty() { "/".to_owned() } else { format!("/{}", self.path.join("/")) };
-            self.issues.push(ValidationIssue { path, rule, message: message.into() });
+            let path = if self.path.is_empty() {
+                "/".to_owned()
+            } else {
+                format!("/{}", self.path.join("/"))
+            };
+            self.issues.push(ValidationIssue {
+                path,
+                rule,
+                message: message.into(),
+            });
         }
     }
 
@@ -290,7 +302,10 @@ pub mod rules {
         if let Some(l) = v.rule_len()
             && l < n
         {
-            cx.issue("min_length", format!("must have at least {n} characters/items (got {l})"));
+            cx.issue(
+                "min_length",
+                format!("must have at least {n} characters/items (got {l})"),
+            );
         }
     }
     /// `max_length = n`
@@ -298,7 +313,10 @@ pub mod rules {
         if let Some(l) = v.rule_len()
             && l > n
         {
-            cx.issue("max_length", format!("must have at most {n} characters/items (got {l})"));
+            cx.issue(
+                "max_length",
+                format!("must have at most {n} characters/items (got {l})"),
+            );
         }
     }
     /// `non_empty`

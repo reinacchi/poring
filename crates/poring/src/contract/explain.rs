@@ -20,11 +20,17 @@ pub fn explain(manifest: &Manifest, query: &str) -> Option<String> {
         "- kind: {}",
         match r.kind {
             RouteKind::Static => "static (declaration verified at compile time by poring_app!)",
-            RouteKind::Dynamic => "dynamic (validated at startup/reload only; NOT compile-time verified)",
-            RouteKind::Native => "native (types checked at compile time; path and policy validated at startup)",
+            RouteKind::Dynamic =>
+                "dynamic (validated at startup/reload only; NOT compile-time verified)",
+            RouteKind::Native =>
+                "native (types checked at compile time; path and policy validated at startup)",
         }
     );
-    let _ = writeln!(o, "- handler: `{}` ({}:{})", r.handler, r.source.file, r.source.line);
+    let _ = writeln!(
+        o,
+        "- handler: `{}` ({}:{})",
+        r.handler, r.source.file, r.source.line
+    );
     if let Some(g) = &r.group {
         let _ = writeln!(o, "- group/plugin: `{g}`");
     }
@@ -54,17 +60,43 @@ pub fn explain(manifest: &Manifest, query: &str) -> Option<String> {
         None => p.csrf.clone(),
     };
     let _ = writeln!(o, "| csrf | {csrf} |");
-    let _ = writeln!(o, "| timeout | {} |", p.timeout_ms.map(|t| format!("{t} ms")).unwrap_or_else(|| "none".into()));
+    let _ = writeln!(
+        o,
+        "| timeout | {} |",
+        p.timeout_ms
+            .map(|t| format!("{t} ms"))
+            .unwrap_or_else(|| "none".into())
+    );
     let _ = writeln!(
         o,
         "| rate limit | {} |",
         p.rate_limit
             .as_ref()
-            .map(|r| format!("{} per {} ms by {}", r.requests, r.per_ms, r.key))
+            .map(|r| {
+                let shared = r
+                    .shared_by
+                    .as_deref()
+                    .map(|o| format!(", shared by {o}"))
+                    .unwrap_or_default();
+                format!(
+                    "{} per {} ms by {} ({} bucket{shared})",
+                    r.requests, r.per_ms, r.key, r.scope
+                )
+            })
             .unwrap_or_else(|| "none".into())
     );
+    if let Some(c) = &p.rate_limit_ceiling {
+        let _ = writeln!(
+            o,
+            "| rate limit ceiling | {} per {} ms by {} (app bucket, enforced in addition) |",
+            c.requests, c.per_ms, c.key
+        );
+    }
     let _ = writeln!(o);
-    let _ = writeln!(o, "## Provenance (merge order: app -> group/plugin -> route)");
+    let _ = writeln!(
+        o,
+        "## Provenance (merge order: app -> group/plugin -> route)"
+    );
     let _ = writeln!(o);
     for line in &p.provenance {
         let _ = writeln!(o, "- {line}");
@@ -101,7 +133,11 @@ pub fn explain(manifest: &Manifest, query: &str) -> Option<String> {
         let _ = writeln!(o);
         let _ = writeln!(o, "## Graph nodes");
         let _ = writeln!(o);
-        for n in g.nodes.iter().filter(|n| n.route.as_deref() == Some(r.id.as_str())) {
+        for n in g
+            .nodes
+            .iter()
+            .filter(|n| n.route.as_deref() == Some(r.id.as_str()))
+        {
             let _ = writeln!(o, "- `{}`: {}", n.id, n.label);
         }
     }
@@ -115,7 +151,14 @@ pub fn explain(manifest: &Manifest, query: &str) -> Option<String> {
 }
 
 fn list(v: &[String]) -> String {
-    if v.is_empty() { "-".to_owned() } else { v.iter().map(|s| format!("`{s}`")).collect::<Vec<_>>().join(", ") }
+    if v.is_empty() {
+        "-".to_owned()
+    } else {
+        v.iter()
+            .map(|s| format!("`{s}`"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
 }
 
 /// Produces a Markdown audit table of every route and its effective policy.
@@ -123,13 +166,23 @@ pub fn audit_markdown(manifest: &Manifest) -> String {
     let mut o = String::new();
     let _ = writeln!(o, "# Security audit: {}", manifest.app);
     let _ = writeln!(o);
-    let _ = writeln!(o, "authenticator: {}  ", manifest.authenticator.as_deref().unwrap_or("(none)"));
+    let _ = writeln!(
+        o,
+        "authenticator: {}  ",
+        manifest.authenticator.as_deref().unwrap_or("(none)")
+    );
     if let Some(c) = &manifest.cors {
-        let _ = writeln!(o, "cors: origins={:?} credentials={}  ", c.origins, c.credentials);
+        let _ = writeln!(
+            o,
+            "cors: origins={:?} credentials={}  ",
+            c.origins, c.credentials
+        );
     }
     let _ = writeln!(o);
-    let _ =
-        writeln!(o, "| route | kind | auth | scopes | roles | body limit | csrf | rate limit | timeout | exception |");
+    let _ = writeln!(
+        o,
+        "| route | kind | auth | scopes | roles | body limit | csrf | rate limit | timeout | exception |"
+    );
     let _ = writeln!(o, "|---|---|---|---|---|---|---|---|---|---|");
     for r in &manifest.routes {
         let p = &r.policy;
@@ -152,12 +205,17 @@ pub fn audit_markdown(manifest: &Manifest) -> String {
                 .as_ref()
                 .map(|r| format!("{}/{}ms {}", r.requests, r.per_ms, r.key))
                 .unwrap_or_else(|| "-".into()),
-            p.timeout_ms.map(|t| format!("{t}ms")).unwrap_or_else(|| "-".into()),
-            p.public_reason.as_deref().or(p.csrf_exempt_reason.as_deref()).unwrap_or(if p.implicit_public {
-                "implicit public (no authenticator)"
-            } else {
-                "-"
-            })
+            p.timeout_ms
+                .map(|t| format!("{t}ms"))
+                .unwrap_or_else(|| "-".into()),
+            p.public_reason
+                .as_deref()
+                .or(p.csrf_exempt_reason.as_deref())
+                .unwrap_or(if p.implicit_public {
+                    "implicit public (no authenticator)"
+                } else {
+                    "-"
+                })
         );
     }
     o

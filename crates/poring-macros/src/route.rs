@@ -5,7 +5,10 @@ use quote::{format_ident, quote, quote_spanned};
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
-use syn::{Expr, FnArg, GenericArgument, Ident, ItemFn, LitStr, Meta, PathArguments, ReturnType, Token, Type};
+use syn::{
+    Expr, FnArg, GenericArgument, Ident, ItemFn, LitStr, Meta, PathArguments, ReturnType, Token,
+    Type,
+};
 
 use crate::policy::{Level, PolicyDecl, parse_policy, parse_policy_meta, str_list};
 use crate::util::{canonicalise, doc_summary, err, pretty};
@@ -25,7 +28,10 @@ pub fn parse_args(input: ParseStream<'_>, with_method: bool) -> syn::Result<Rout
         None
     };
     let path: LitStr = input.parse().map_err(|e| {
-        syn::Error::new(e.span(), "expected the route path as a string literal, e.g. #[poring::get(\"/users/{id}\")]")
+        syn::Error::new(
+            e.span(),
+            "expected the route path as a string literal, e.g. #[poring::get(\"/users/{id}\")]",
+        )
     })?;
     let mut items = Vec::new();
     if input.peek(Token![,]) {
@@ -33,7 +39,11 @@ pub fn parse_args(input: ParseStream<'_>, with_method: bool) -> syn::Result<Rout
         let rest = Punctuated::<Meta, Token![,]>::parse_terminated(input)?;
         items.extend(rest);
     }
-    Ok(RouteArgs { method, path, items })
+    Ok(RouteArgs {
+        method,
+        path,
+        items,
+    })
 }
 
 struct WithMethod(RouteArgs);
@@ -56,7 +66,10 @@ fn hook_paths(e: &Expr) -> syn::Result<Vec<syn::Path>> {
             .iter()
             .map(|x| match x {
                 Expr::Path(p) => Ok(p.path.clone()),
-                _ => Err(err(x.span(), "expected a hook path (a function annotated with #[poring::hook])")),
+                _ => Err(err(
+                    x.span(),
+                    "expected a hook path (a function annotated with #[poring::hook])",
+                )),
             })
             .collect(),
         Expr::Path(p) => Ok(vec![p.path.clone()]),
@@ -76,7 +89,9 @@ fn method_variant(m: &str, span: Span) -> syn::Result<TokenStream> {
         other => {
             return Err(err(
                 span,
-                format!("unsupported method `{other}` (GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS)"),
+                format!(
+                    "unsupported method `{other}` (GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS)"
+                ),
             ));
         }
     };
@@ -101,20 +116,30 @@ fn first_generic(args: &PathArguments) -> Option<&Type> {
 }
 
 const SCALARS: &[&str] = &[
-    "u8", "u16", "u32", "u64", "u128", "usize", "i8", "i16", "i32", "i64", "i128", "isize", "f32", "f64", "bool",
-    "char", "String",
+    "u8", "u16", "u32", "u64", "u128", "usize", "i8", "i16", "i32", "i64", "i128", "isize", "f32",
+    "f64", "bool", "char", "String",
 ];
 
 /// Compile-time `Path<T>` shape checks against the declared parameters.
 fn check_path_extractor(ty: &Type, params: &[String], path: &str) -> syn::Result<()> {
-    let Some((id, args)) = last_ident(ty) else { return Ok(()) };
+    let Some((id, args)) = last_ident(ty) else {
+        return Ok(());
+    };
     if id != "Path" {
         return Ok(());
     }
     if params.is_empty() {
-        return Err(err(ty.span(), format!("`{}` used, but route `{path}` declares no path parameters", pretty(ty))));
+        return Err(err(
+            ty.span(),
+            format!(
+                "`{}` used, but route `{path}` declares no path parameters",
+                pretty(ty)
+            ),
+        ));
     }
-    let Some(inner) = first_generic(args) else { return Ok(()) };
+    let Some(inner) = first_generic(args) else {
+        return Ok(());
+    };
     match inner {
         Type::Tuple(t) if t.elems.len() != params.len() => Err(err(
             ty.span(),
@@ -170,7 +195,11 @@ pub fn expand(kind: Kind, attr: TokenStream, item: TokenStream) -> syn::Result<T
     let mut after: Vec<syn::Path> = Vec::new();
     let mut annotations: Vec<String> = Vec::new();
     for m in &args.items {
-        let key = m.path().get_ident().map(|i| i.to_string()).unwrap_or_default();
+        let key = m
+            .path()
+            .get_ident()
+            .map(|i| i.to_string())
+            .unwrap_or_default();
         match key.as_str() {
             "policy" => {
                 if policy_set {
@@ -181,7 +210,10 @@ pub fn expand(kind: Kind, attr: TokenStream, item: TokenStream) -> syn::Result<T
             }
             "public" => {
                 if policy_set {
-                    return Err(err(m.span(), "declare `public` inside `policy(..)` when a policy is also given"));
+                    return Err(err(
+                        m.span(),
+                        "declare `public` inside `policy(..)` when a policy is also given",
+                    ));
                 }
                 policy = parse_policy(std::slice::from_ref(m), Level::Route)?;
                 policy_set = true;
@@ -191,7 +223,11 @@ pub fn expand(kind: Kind, attr: TokenStream, item: TokenStream) -> syn::Result<T
                     return Err(err(m.span(), format!("use `{key} = [hook, ..]`")));
                 };
                 let v = hook_paths(&nv.value)?;
-                if key == "before" { before = v } else { after = v }
+                if key == "before" {
+                    before = v
+                } else {
+                    after = v
+                }
             }
             "annotate" => {
                 let Meta::NameValue(nv) = m else {
@@ -222,10 +258,18 @@ pub fn expand(kind: Kind, attr: TokenStream, item: TokenStream) -> syn::Result<T
     let mut tys: Vec<&Type> = Vec::new();
     for a in &func.sig.inputs {
         match a {
-            FnArg::Receiver(r) => return Err(err(r.span(), "route handlers must be free functions (no `self`)")),
+            FnArg::Receiver(r) => {
+                return Err(err(
+                    r.span(),
+                    "route handlers must be free functions (no `self`)",
+                ));
+            }
             FnArg::Typed(t) => {
                 if matches!(*t.ty, Type::ImplTrait(_)) {
-                    return Err(err(t.ty.span(), "`impl Trait` is not supported as an extractor type"));
+                    return Err(err(
+                        t.ty.span(),
+                        "`impl Trait` is not supported as an extractor type",
+                    ));
                 }
                 check_path_extractor(&t.ty, &params, &canon)?;
                 tys.push(&t.ty);
@@ -243,7 +287,6 @@ pub fn expand(kind: Kind, attr: TokenStream, item: TokenStream) -> syn::Result<T
     let after_strs: Vec<String> = after.iter().map(pretty).collect();
     let line = quote_spanned!(name.span()=> ::core::line!());
 
-    // Const assertions with spans on the offending argument types.
     let mut asserts = Vec::new();
     let n = tys.len();
     for (i, ty) in tys.iter().enumerate() {
@@ -281,7 +324,11 @@ pub fn expand(kind: Kind, attr: TokenStream, item: TokenStream) -> syn::Result<T
             };
         }
     });
-    let call = if is_async { quote!(#name(#(#arg_idents),*).await) } else { quote!(#name(#(#arg_idents),*)) };
+    let call = if is_async {
+        quote!(#name(#(#arg_idents),*).await)
+    } else {
+        quote!(#name(#(#arg_idents),*))
+    };
     let ret_ty: Type = match &func.sig.output {
         ReturnType::Default => syn::parse_quote!(()),
         ReturnType::Type(_, t) => (**t).clone(),
@@ -308,8 +355,12 @@ pub fn expand(kind: Kind, attr: TokenStream, item: TokenStream) -> syn::Result<T
         ReturnType::Type(_, t) => t.span(),
     };
     let respond_call = quote_spanned!(ret_span=> (&mut &mut __w).__poring_respond());
-    let before_bounds = before.iter().map(|h| quote_spanned!(h.span()=> #h: #p::BeforeHook<S>,));
-    let after_bounds = after.iter().map(|h| quote_spanned!(h.span()=> #h: #p::AfterHook<S>,));
+    let before_bounds = before
+        .iter()
+        .map(|h| quote_spanned!(h.span()=> #h: #p::BeforeHook<S>,));
+    let after_bounds = after
+        .iter()
+        .map(|h| quote_spanned!(h.span()=> #h: #p::AfterHook<S>,));
     let before_calls = before.iter().map(|h| {
         quote_spanned! {h.span()=>
             cx.__mark_before();
@@ -322,7 +373,9 @@ pub fn expand(kind: Kind, attr: TokenStream, item: TokenStream) -> syn::Result<T
             <#h as #p::AfterHook<S>>::after(cx, res).await;
         }
     });
-    let ty_bounds = tys.iter().map(|ty| quote_spanned!(ty.span()=> #ty: #p::FromRequest<S>,));
+    let ty_bounds = tys
+        .iter()
+        .map(|ty| quote_spanned!(ty.span()=> #ty: #p::FromRequest<S>,));
     let param_strs = &params;
 
     Ok(quote! {

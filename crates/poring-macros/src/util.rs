@@ -18,7 +18,9 @@ pub fn canonicalise(path: &str) -> Result<(String, Vec<String>), String> {
         return Err(format!("route path `{path}` must not contain `//`"));
     }
     if path.contains(['?', '#']) || path.chars().any(char::is_whitespace) {
-        return Err(format!("route path `{path}` must not contain `?`, `#` or whitespace"));
+        return Err(format!(
+            "route path `{path}` must not contain `?`, `#` or whitespace"
+        ));
     }
     if path.contains("{{") || path.contains("}}") {
         return Err("escaped braces `{{`/`}}` are not supported in Poring route paths".into());
@@ -72,7 +74,9 @@ pub fn canonicalise(path: &str) -> Result<(String, Vec<String>), String> {
                     return Err(format!("route path `{path}`: duplicate parameter `{n}`"));
                 }
                 if catch_all && !last {
-                    return Err(format!("route path `{path}`: catch-all `{{*{n}}}` must be the last segment"));
+                    return Err(format!(
+                        "route path `{path}`: catch-all `{{*{n}}}` must be the last segment"
+                    ));
                 }
                 params.push(n.to_owned());
                 if catch_all {
@@ -84,7 +88,9 @@ pub fn canonicalise(path: &str) -> Result<(String, Vec<String>), String> {
         }
     }
     if params.len() > MAX_PARAMS {
-        return Err(format!("route path `{path}` has more than {MAX_PARAMS} parameters"));
+        return Err(format!(
+            "route path `{path}` has more than {MAX_PARAMS} parameters"
+        ));
     }
     Ok((out, params))
 }
@@ -156,7 +162,10 @@ mod tests {
 
     #[test]
     fn canonical_paths() {
-        assert_eq!(canonicalise("/users/:id").unwrap(), ("/users/{id}".into(), vec!["id".into()]));
+        assert_eq!(
+            canonicalise("/users/:id").unwrap(),
+            ("/users/{id}".into(), vec!["id".into()])
+        );
         assert_eq!(canonicalise("/files/*").unwrap().0, "/files/{*rest}");
         assert_eq!(canonicalise("/a/{b}/c/{*d}").unwrap().1, vec!["b", "d"]);
         assert_eq!(canonicalise("/").unwrap().0, "/");

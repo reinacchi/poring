@@ -25,9 +25,10 @@ struct Tokens;
 impl Authenticator for Tokens {
     async fn authenticate(&self, r: &AuthRequest<'_>) -> Result<Option<Identity>, AuthError> {
         match r.bearer_token() {
-            Some("demo") => {
-                Ok(Some(Identity::new("demo", Credential::Bearer).with_scopes(["orders:write", "guest:call"])))
-            }
+            Some("demo") => Ok(Some(
+                Identity::new("demo", Credential::Bearer)
+                    .with_scopes(["orders:write", "guest:call"]),
+            )),
             Some(_) => Err(AuthError::Invalid),
             None => Ok(None),
         }
@@ -55,7 +56,14 @@ async fn create_order(
     Principal(who): Principal<Authenticated>,
     Json(o): Json<NewOrder>,
 ) -> (StatusCode, Json<OrderAccepted>) {
-    (StatusCode::CREATED, Json(OrderAccepted { sku: o.sku, qty: o.qty, by: who.subject.clone() }))
+    (
+        StatusCode::CREATED,
+        Json(OrderAccepted {
+            sku: o.sku,
+            qty: o.qty,
+            by: who.subject.clone(),
+        }),
+    )
 }
 
 #[derive(Clone)]
@@ -68,7 +76,10 @@ struct AppState {
 
 /// Static flow graph of the app as rendered at startup (Mermaid). The live guest version is
 /// always available from `App::manifest()` / the `x-poring-guest` header.
-#[poring::get("/__graph", public(reason = "development introspection; contains declarations only"))]
+#[poring::get(
+    "/__graph",
+    public(reason = "development introspection; contains declarations only")
+)]
 async fn graph(State(g): State<Graph>) -> String {
     g.0.get().cloned().unwrap_or_default()
 }
@@ -87,8 +98,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     poring::dump_manifest_if_requested::<LiveApp>();
     tracing_subscriber::fmt().with_env_filter("info").init();
     let args: Vec<String> = std::env::args().collect();
-    let watch_path = args.iter().position(|a| a == "--watch").and_then(|i| args.get(i + 1)).map(PathBuf::from);
-    let guest_path = watch_path.clone().unwrap_or_else(|| PathBuf::from("target/demo-guest.wat"));
+    let watch_path = args
+        .iter()
+        .position(|a| a == "--watch")
+        .and_then(|i| args.get(i + 1))
+        .map(PathBuf::from);
+    let guest_path = watch_path
+        .clone()
+        .unwrap_or_else(|| PathBuf::from("target/demo-guest.wat"));
     if !guest_path.exists() {
         if let Some(dir) = guest_path.parent() {
             std::fs::create_dir_all(dir)?;
@@ -98,18 +115,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let host = WasmHost::new()?;
     let bytes = poring::wasm::watch::read_artefact(&guest_path)?;
     let slot = GuestSlot::new(host, GuestConfig::new("orders-guest"), &bytes)?;
-    let policy = DynPolicy { scopes: vec!["guest:call".into()], body_limit: Some(4096), ..Default::default() };
+    let policy = DynPolicy {
+        scopes: vec!["guest:call".into()],
+        body_limit: Some(4096),
+        ..Default::default()
+    };
     let graph = Graph(Default::default());
     let app = LiveApp::builder()
-        .state(AppState { graph: graph.clone() })
+        .state(AppState {
+            graph: graph.clone(),
+        })
         .authenticator(Tokens)
-        .flow_recording(FlowConfig { sample_every: 1, capacity: 64 })
-        .mount_dynamic(GuestRoute::mount(slot.clone(), Method::Get, "/guest/{*rest}", policy))
+        .flow_recording(FlowConfig {
+            sample_every: 1,
+            capacity: 64,
+        })
+        .mount_dynamic(GuestRoute::mount(
+            slot.clone(),
+            Method::Get,
+            "/guest/{*rest}",
+            policy,
+        ))
         .build()?;
-    let _ = graph.0.set(poring::contract::render_mermaid(&app.graph(None).ok_or("graph")?));
+    let _ = graph.0.set(poring::contract::render_mermaid(
+        &app.graph(None).ok_or("graph")?,
+    ));
     // The development watcher is opt-in: `--watch <path>`.
     let _watch = match &watch_path {
-        Some(p) => Some(poring::wasm::watch::watch(slot.clone(), p, Default::default())?),
+        Some(p) => Some(poring::wasm::watch::watch(
+            slot.clone(),
+            p,
+            Default::default(),
+        )?),
         None => None,
     };
     let addr = std::env::var("PORING_ADDR").unwrap_or_else(|_| "127.0.0.1:3000".into());

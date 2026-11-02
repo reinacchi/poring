@@ -82,7 +82,9 @@ impl DynPolicy {
             (Some(false), _) => p.public(),
             (None, _) => p,
         };
-        p = p.scopes(self.scopes.iter().cloned()).roles(self.roles.iter().cloned());
+        p = p
+            .scopes(self.scopes.iter().cloned())
+            .roles(self.roles.iter().cloned());
         if let Some(l) = self.body_limit {
             p = p.body_limit(l);
         }
@@ -94,8 +96,8 @@ impl DynPolicy {
             Some(0) => p.no_timeout(),
             Some(ms) => p.timeout(Duration::from_millis(ms)),
         };
-        if let Some(r) = self.rate_limit {
-            p = p.rate_limit(r.requests, Duration::from_millis(r.per_ms), r.key);
+        if let Some(r) = &self.rate_limit {
+            p = p.with_rate_limit(crate::policy::RateLimit::from_spec(r));
         }
         p
     }
@@ -142,7 +144,10 @@ pub fn validate_path(path: &str) -> Result<(), String> {
             return Err("static segments must not be percent-encoded".into());
         }
         if s.starts_with('{') {
-            let inner = s.strip_prefix('{').and_then(|x| x.strip_suffix('}')).ok_or("unterminated parameter")?;
+            let inner = s
+                .strip_prefix('{')
+                .and_then(|x| x.strip_suffix('}'))
+                .ok_or("unterminated parameter")?;
             let (catch_all, name) = match inner.strip_prefix('*') {
                 Some(n) => (true, n),
                 None => (false, inner),

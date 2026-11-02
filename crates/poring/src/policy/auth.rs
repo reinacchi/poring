@@ -35,7 +35,12 @@ pub struct Identity {
 impl Identity {
     /// Creates an identity with no scopes/roles.
     pub fn new(subject: impl Into<String>, credential: Credential) -> Self {
-        Identity { subject: subject.into(), scopes: Vec::new(), roles: Vec::new(), credential }
+        Identity {
+            subject: subject.into(),
+            scopes: Vec::new(),
+            roles: Vec::new(),
+            credential,
+        }
     }
 
     /// Builder: add scopes.
@@ -86,9 +91,17 @@ pub struct AuthRequest<'a> {
 impl AuthRequest<'_> {
     /// The bearer token from `Authorization: Bearer <token>`, if present and valid UTF-8.
     pub fn bearer_token(&self) -> Option<&str> {
-        let v = self.headers.get(http::header::AUTHORIZATION)?.to_str().ok()?;
+        let v = self
+            .headers
+            .get(http::header::AUTHORIZATION)?
+            .to_str()
+            .ok()?;
         let (scheme, token) = v.split_once(' ')?;
-        if scheme.eq_ignore_ascii_case("bearer") && !token.trim().is_empty() { Some(token.trim()) } else { None }
+        if scheme.eq_ignore_ascii_case("bearer") && !token.trim().is_empty() {
+            Some(token.trim())
+        } else {
+            None
+        }
     }
 
     /// The value of cookie `name`, if present.
@@ -119,7 +132,10 @@ pub trait Authenticator: Send + Sync + 'static {
     const USES_COOKIES: bool = false;
 
     /// Authenticates the request head. `Ok(None)` means "no credentials" (401).
-    fn authenticate(&self, req: &AuthRequest<'_>) -> impl Future<Output = Result<Option<Identity>, AuthError>> + Send;
+    fn authenticate(
+        &self,
+        req: &AuthRequest<'_>,
+    ) -> impl Future<Output = Result<Option<Identity>, AuthError>> + Send;
 }
 
 /// Placeholder authenticator for apps that declare none. Never invoked: routes requiring

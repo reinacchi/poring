@@ -141,7 +141,14 @@ pub struct FlowState {
 
 impl FlowState {
     pub(crate) fn new(start: Instant) -> Self {
-        FlowState { start, steps: Vec::with_capacity(16), before: 0, after: 0, extract: 0, annotation: 0 }
+        FlowState {
+            start,
+            steps: Vec::with_capacity(16),
+            before: 0,
+            after: 0,
+            extract: 0,
+            annotation: 0,
+        }
     }
 
     pub(crate) fn mark(&mut self, s: Stage) {
@@ -157,7 +164,11 @@ impl FlowState {
             .iter()
             .enumerate()
             .map(|(i, (s, t))| {
-                let end = if i + 1 < n { self.steps[i + 1].1 } else { total };
+                let end = if i + 1 < n {
+                    self.steps[i + 1].1
+                } else {
+                    total
+                };
                 TraceStep {
                     node: NodeId { route, stage: *s }.to_string(),
                     start_us: *t,
@@ -186,7 +197,10 @@ pub struct FlowConfig {
 
 impl Default for FlowConfig {
     fn default() -> Self {
-        FlowConfig { sample_every: 0, capacity: 256 }
+        FlowConfig {
+            sample_every: 0,
+            capacity: 256,
+        }
     }
 }
 
@@ -226,7 +240,9 @@ impl FlowRecorder {
         if !cfg!(feature = "trace-flow") || self.cfg.sample_every == 0 {
             return false;
         }
-        self.counter.fetch_add(1, Ordering::Relaxed).is_multiple_of(self.cfg.sample_every)
+        self.counter
+            .fetch_add(1, Ordering::Relaxed)
+            .is_multiple_of(self.cfg.sample_every)
     }
 
     /// Stores a finished trace. Never blocks: on lock contention the trace is dropped and
@@ -249,11 +265,17 @@ impl FlowRecorder {
 
     /// A copy of the buffered traces (oldest first).
     pub fn recent(&self) -> Vec<RuntimeTrace> {
-        self.buf.lock().map(|b| b.iter().cloned().collect()).unwrap_or_default()
+        self.buf
+            .lock()
+            .map(|b| b.iter().cloned().collect())
+            .unwrap_or_default()
     }
 
     /// Statistics.
     pub fn stats(&self) -> FlowStats {
-        FlowStats { recorded: self.recorded.load(Ordering::Relaxed), dropped: self.dropped.load(Ordering::Relaxed) }
+        FlowStats {
+            recorded: self.recorded.load(Ordering::Relaxed),
+            dropped: self.dropped.load(Ordering::Relaxed),
+        }
     }
 }

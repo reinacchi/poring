@@ -50,6 +50,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+#[path = "app/mod.rs"]
 pub mod app;
 pub mod body;
 pub mod contract;
@@ -74,7 +75,8 @@ pub mod wasm;
 pub mod ws;
 
 pub use app::{
-    App, AppSpec, Builder, Limits, ResponseInfo, SecurityHeaders, Server, StartupError, dump_manifest_if_requested,
+    App, AppSpec, Builder, Limits, ResponseInfo, SecurityHeaders, Server, StartupError,
+    dump_manifest_if_requested,
 };
 pub use body::{Body, ReqBody};
 pub use ctx::{Ctx, RequestId};
@@ -87,7 +89,8 @@ pub use response::{Html, IntoResponse, Redirect, Response};
 pub use schema::PoringSchema;
 
 pub use poring_macros::{
-    PoringSchema, PoringState, delete, get, head, hook, options, patch, poring_app, poring_plugin, post, put, route, ws,
+    PoringSchema, PoringState, delete, get, head, hook, options, patch, poring_app, poring_plugin,
+    post, put, route, ws,
 };
 
 pub use bytes::Bytes;
@@ -97,15 +100,20 @@ pub use http::{self, HeaderMap, HeaderValue, Method, StatusCode, Uri};
 pub mod prelude {
     pub use crate::descriptor::Method as RouteMethod;
     pub use crate::extract::{
-        Authenticated, Cookie, Cookies, Extension, Form, FromIdentity, FromRef, FromRequest, Header, Path, Principal,
-        Query, State,
+        Authenticated, Cookie, Cookies, Extension, Form, FromIdentity, FromRef, FromRequest,
+        Header, Path, Principal, Query, State,
     };
     pub use crate::fluent::Poring;
-    pub use crate::policy::{AuthError, AuthRequest, Authenticator, Cors, Credential, Identity, Policy};
+    pub use crate::policy::{
+        AuthError, AuthRequest, Authenticator, Cors, Credential, Identity, Policy, RateKey,
+        RateLimit, RateLimitStatus, RateScope,
+    };
     #[cfg(feature = "json")]
     pub use crate::response::Json;
     pub use crate::response::{Html, IntoResponse, Redirect, Response};
-    pub use crate::{ApiError, Body, Bytes, Ctx, HeaderMap, HeaderValue, PoringSchema, RequestId, StatusCode};
+    pub use crate::{
+        ApiError, Body, Bytes, Ctx, HeaderMap, HeaderValue, PoringSchema, RequestId, StatusCode,
+    };
     pub use poring_macros::{PoringState, poring_app, poring_plugin};
 }
 
@@ -115,16 +123,19 @@ pub mod __private {
     pub use crate::app::{AppSpec, Builder, Missing, Provided};
     pub use crate::ctx::Ctx;
     pub use crate::descriptor::{
-        AppDescriptor, CorsSpec, ExtractorDesc, ExtractorKind, GroupDescriptor, Method, ResponseDoc, RouteDescriptor,
-        RouteRef,
+        AppDescriptor, CorsSpec, ExtractorDesc, ExtractorKind, GroupDescriptor, Method,
+        ResponseDoc, RouteDescriptor, RouteRef,
     };
     pub use crate::extract::{ExtractorMeta, FromRef, FromRequest};
     pub use crate::flow::Stage;
     pub use crate::policy::check::check_app;
     pub use crate::policy::{
-        AuthSpec, Authenticator, CsrfSpec, NoAuth, PolicySpec, RateKey, RateLimitSpec, TimeoutSpec,
+        AuthSpec, Authenticator, CsrfSpec, NoAuth, PolicySpec, RateKey, RateLimitSpec, RateScope,
+        TimeoutSpec,
     };
-    pub use crate::response::describe::{DescribeFallback, DescribeResponse, DescribeViaTrait, Probe};
+    pub use crate::response::describe::{
+        DescribeFallback, DescribeResponse, DescribeViaTrait, Probe,
+    };
     pub use crate::response::respond::{RespondPlain, RespondResult, Wrap};
     pub use crate::response::{IntoResponse, Response};
     pub use crate::schema::{PoringSchema, SchemaRegistry, ValidationCx, rules};
@@ -144,11 +155,16 @@ pub mod __private {
     )]
     pub trait RouteHandler<S>: RouteInfo {
         /// Route-local before hooks.
-        fn before<'a, 'c>(cx: &'c mut Ctx<'a, S>) -> impl Future<Output = Result<(), Response>> + Send + 'c;
+        fn before<'a, 'c>(
+            cx: &'c mut Ctx<'a, S>,
+        ) -> impl Future<Output = Result<(), Response>> + Send + 'c;
         /// Extraction, handler call and response mapping.
         fn handle<'a, 'c>(cx: &'c mut Ctx<'a, S>) -> impl Future<Output = Response> + Send + 'c;
         /// Route-local after hooks.
-        fn after<'a, 'c>(cx: &'c mut Ctx<'a, S>, res: &'c mut Response) -> impl Future<Output = ()> + Send + 'c;
+        fn after<'a, 'c>(
+            cx: &'c mut Ctx<'a, S>,
+            res: &'c mut Response,
+        ) -> impl Future<Output = ()> + Send + 'c;
     }
 
     /// Implemented by `poring_plugin!`: plugin descriptors.
@@ -168,7 +184,10 @@ pub mod __private {
     pub trait PluginDispatch<S>: PluginSpec {
         /// Plugin before hooks, route before hooks and the handler of plugin-local route
         /// `index` (short-circuits on the first hook error).
-        fn run<'a, 'c>(index: u16, cx: &'c mut Ctx<'a, S>) -> impl Future<Output = Response> + Send + 'c;
+        fn run<'a, 'c>(
+            index: u16,
+            cx: &'c mut Ctx<'a, S>,
+        ) -> impl Future<Output = Response> + Send + 'c;
         /// Route after hooks, then plugin after hooks (always run).
         fn after<'a, 'c>(
             index: u16,
@@ -208,7 +227,10 @@ pub mod __private {
     ) -> [RouteRef; N] {
         let mut i = 0;
         while i < src.len() {
-            dst[at + i] = RouteRef { desc: src[i], group };
+            dst[at + i] = RouteRef {
+                desc: src[i],
+                group,
+            };
             i += 1;
         }
         dst
@@ -228,7 +250,9 @@ pub mod __private {
         /// Hook name.
         const NAME: &'static str;
         /// Runs the hook; `Err(response)` short-circuits.
-        fn before<'a, 'c>(cx: &'c mut Ctx<'a, S>) -> impl Future<Output = Result<(), Response>> + Send + 'c;
+        fn before<'a, 'c>(
+            cx: &'c mut Ctx<'a, S>,
+        ) -> impl Future<Output = Result<(), Response>> + Send + 'c;
     }
 
     /// After hook (`#[poring::hook]` on `async fn(&Ctx<'_, S>, &mut Response)`).
@@ -240,7 +264,10 @@ pub mod __private {
         /// Hook name.
         const NAME: &'static str;
         /// Runs the hook.
-        fn after<'a, 'c>(cx: &'c Ctx<'a, S>, res: &'c mut Response) -> impl Future<Output = ()> + Send + 'c;
+        fn after<'a, 'c>(
+            cx: &'c Ctx<'a, S>,
+            res: &'c mut Response,
+        ) -> impl Future<Output = ()> + Send + 'c;
     }
 
     pub use crate::handler::HookOutcome;

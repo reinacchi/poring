@@ -27,11 +27,17 @@ impl<S: Sync, T: DeserializeOwned + PoringSchema + Send> FromRequest<S> for Form
         let ok = cx
             .content_type()
             .map(|ct| {
-                ct.split(';').next().unwrap_or("").trim().eq_ignore_ascii_case("application/x-www-form-urlencoded")
+                ct.split(';')
+                    .next()
+                    .unwrap_or("")
+                    .trim()
+                    .eq_ignore_ascii_case("application/x-www-form-urlencoded")
             })
             .unwrap_or(false);
         if !ok {
-            return Err(rejection::unsupported_media_type("application/x-www-form-urlencoded"));
+            return Err(rejection::unsupported_media_type(
+                "application/x-www-form-urlencoded",
+            ));
         }
         let body = read_body(cx).await?;
         let limits = cx.limits();

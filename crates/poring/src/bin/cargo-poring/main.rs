@@ -96,14 +96,17 @@ fn load(a: &Args) -> Result<Manifest, String> {
     let path = match (&a.manifest, &a.example) {
         (Some(p), _) => p.clone(),
         (None, Some(ex)) => {
-            let tmp = std::env::temp_dir().join(format!("poring-manifest-{}-{ex}.json", std::process::id()));
+            let tmp = std::env::temp_dir()
+                .join(format!("poring-manifest-{}-{ex}.json", std::process::id()));
             let mut c = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()));
             c.args(["run", "-q", "--example", ex]);
             if let Some(p) = &a.package {
                 c.args(["-p", p]);
             }
             c.env("PORING_DUMP_MANIFEST", &tmp);
-            let status = c.status().map_err(|e| format!("failed to run cargo: {e}"))?;
+            let status = c
+                .status()
+                .map_err(|e| format!("failed to run cargo: {e}"))?;
             if !status.success() {
                 return Err(format!(
                     "example `{ex}` did not produce a manifest (exit {status}); does its main() call poring::dump_manifest_if_requested::<App>() first?"
@@ -114,7 +117,8 @@ fn load(a: &Args) -> Result<Manifest, String> {
         (None, None) => return Err(format!("need --manifest FILE or --example NAME\n{USAGE}")),
     };
     let bytes = std::fs::read(&path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-    serde_json::from_slice(&bytes).map_err(|e| format!("{} is not a Poring manifest: {e}", path.display()))
+    serde_json::from_slice(&bytes)
+        .map_err(|e| format!("{} is not a Poring manifest: {e}", path.display()))
 }
 
 fn run() -> Result<String, String> {
@@ -133,13 +137,18 @@ fn run() -> Result<String, String> {
         }
         "graph" => {
             let m = load(&a)?;
-            let route = a.route.as_deref().or(a.positional.first().map(String::as_str));
-            let g = poring::contract::build_graph(&m, route).ok_or_else(|| format!("no route matches {route:?}"))?;
+            let route = a
+                .route
+                .as_deref()
+                .or(a.positional.first().map(String::as_str));
+            let g = poring::contract::build_graph(&m, route)
+                .ok_or_else(|| format!("no route matches {route:?}"))?;
             match a.format.as_deref().unwrap_or("mermaid") {
                 "mermaid" => match &a.trace {
                     Some(t) => {
                         let bytes = std::fs::read(t).map_err(|e| e.to_string())?;
-                        let trace: RuntimeTrace = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+                        let trace: RuntimeTrace =
+                            serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
                         Ok(poring::contract::render_mermaid_with_trace(&g, &trace))
                     }
                     None => Ok(poring::contract::render_mermaid(&g)),
@@ -151,7 +160,10 @@ fn run() -> Result<String, String> {
         }
         "explain" => {
             let m = load(&a)?;
-            let q = a.route.clone().or_else(|| (!a.positional.is_empty()).then(|| a.positional.join(" ")));
+            let q = a
+                .route
+                .clone()
+                .or_else(|| (!a.positional.is_empty()).then(|| a.positional.join(" ")));
             let q = q.ok_or("explain needs a route, e.g. \"GET /users/{id}\"")?;
             poring::contract::explain(&m, &q).ok_or_else(|| format!("no route matches `{q}`"))
         }
@@ -160,7 +172,10 @@ fn run() -> Result<String, String> {
             match a.format.as_deref().unwrap_or("md") {
                 "md" | "markdown" => Ok(poring::contract::audit_markdown(&m)),
                 "json" => serde_json::to_string_pretty(
-                    &m.routes.iter().map(|r| (format!("{} {}", r.method, r.path), &r.policy)).collect::<Vec<_>>(),
+                    &m.routes
+                        .iter()
+                        .map(|r| (format!("{} {}", r.method, r.path), &r.policy))
+                        .collect::<Vec<_>>(),
                 )
                 .map(|s| s + "\n")
                 .map_err(|e| e.to_string()),
@@ -177,8 +192,15 @@ fn run() -> Result<String, String> {
         }),
         "wasm" => match a.positional.first().map(String::as_str) {
             Some("componentise") => {
-                let input: PathBuf = a.positional.get(1).ok_or("componentise needs an input file")?.into();
-                dev::componentise_file(&input, a.out.as_ref().ok_or("componentise needs -o <out.wasm>")?)
+                let input: PathBuf = a
+                    .positional
+                    .get(1)
+                    .ok_or("componentise needs an input file")?
+                    .into();
+                dev::componentise_file(
+                    &input,
+                    a.out.as_ref().ok_or("componentise needs -o <out.wasm>")?,
+                )
             }
             Some("new-echo") => dev::new_echo(
                 a.name.as_deref().ok_or("new-echo needs --name")?,

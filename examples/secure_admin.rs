@@ -33,10 +33,12 @@ impl Authenticator for DemoAuth {
             (Some("root"), _) => Identity::new("root", Credential::Bearer)
                 .with_roles(["admin"])
                 .with_scopes(["users:read", "users:delete"]),
-            (Some("helpdesk"), _) => {
-                Identity::new("helpdesk", Credential::Bearer).with_roles(["admin"]).with_scopes(["users:read"])
+            (Some("helpdesk"), _) => Identity::new("helpdesk", Credential::Bearer)
+                .with_roles(["admin"])
+                .with_scopes(["users:read"]),
+            (Some("viewer"), _) => {
+                Identity::new("viewer", Credential::Bearer).with_scopes(["users:read"])
             }
-            (Some("viewer"), _) => Identity::new("viewer", Credential::Bearer).with_scopes(["users:read"]),
             (Some(_), _) => return Err(AuthError::Invalid),
             (None, Some("root-session")) => Identity::new("root", Credential::Cookie)
                 .with_roles(["admin"])
@@ -62,14 +64,25 @@ impl Default for Directory {
     fn default() -> Self {
         let users = [(1, "ada"), (2, "grace"), (3, "linus")]
             .into_iter()
-            .map(|(id, n)| (id, User { id, name: n.to_owned() }))
+            .map(|(id, n)| {
+                (
+                    id,
+                    User {
+                        id,
+                        name: n.to_owned(),
+                    },
+                )
+            })
             .collect();
         Directory(Arc::new(Mutex::new(users)))
     }
 }
 
 /// Load balancer probe.
-#[poring::get("/health", public(reason = "load balancer liveness probe; returns no data"))]
+#[poring::get(
+    "/health",
+    public(reason = "load balancer liveness probe; returns no data")
+)]
 async fn health() -> &'static str {
     "ok"
 }
@@ -77,7 +90,13 @@ async fn health() -> &'static str {
 /// List users.
 #[poring::get("/users", policy(scopes = ["users:read"]), annotate = ["directory: read all users"])]
 async fn list_users(State(d): State<Directory>) -> Json<Vec<User>> {
-    Json(d.0.lock().unwrap_or_else(|p| p.into_inner()).values().cloned().collect())
+    Json(
+        d.0.lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .values()
+            .cloned()
+            .collect(),
+    )
 }
 
 /// Delete a user.
@@ -145,10 +164,17 @@ mod tests {
         let c = app().client();
         assert_eq!(c.get("/health").send().await.status, 200);
         assert_eq!(c.get("/admin/users").send().await.status, 401);
-        assert_eq!(c.get("/admin/users").bearer("viewer").send().await.status, 403);
+        assert_eq!(
+            c.get("/admin/users").bearer("viewer").send().await.status,
+            403
+        );
         assert_eq!(c.delete("/admin/users/1").send().await.status, 401);
         assert_eq!(
-            c.delete("/admin/users/1").bearer("helpdesk").send().await.status,
+            c.delete("/admin/users/1")
+                .bearer("helpdesk")
+                .send()
+                .await
+                .status,
             403,
             "admin without users:delete"
         );
@@ -157,19 +183,43 @@ mod tests {
     #[tokio::test]
     async fn admin_can_list_and_delete() {
         let c = app().client();
-        assert_eq!(c.get("/admin/users").bearer("root").send().await.status, 200);
-        assert_eq!(c.delete("/admin/users/2").bearer("root").send().await.status, 204);
-        assert_eq!(c.delete("/admin/users/2").bearer("root").send().await.status, 404);
+        assert_eq!(
+            c.get("/admin/users").bearer("root").send().await.status,
+            200
+        );
+        assert_eq!(
+            c.delete("/admin/users/2")
+                .bearer("root")
+                .send()
+                .await
+                .status,
+            204
+        );
+        assert_eq!(
+            c.delete("/admin/users/2")
+                .bearer("root")
+                .send()
+                .await
+                .status,
+            404
+        );
     }
 
     #[tokio::test]
     async fn cookie_session_deletes_need_csrf() {
         let c = app().client();
-        let r = c.delete("/admin/users/1").header("cookie", "sid=root-session").send().await;
+        let r = c
+            .delete("/admin/users/1")
+            .header("cookie", "sid=root-session")
+            .send()
+            .await;
         assert_eq!(r.status, 403);
         let r = c
             .delete("/admin/users/1")
-            .header("cookie", "sid=root-session; poring-csrf=abcdefabcdefabcdef12")
+            .header(
+                "cookie",
+                "sid=root-session; poring-csrf=abcdefabcdefabcdef12",
+            )
             .header("x-csrf-token", "abcdefabcdefabcdef12")
             .send()
             .await;
@@ -180,6 +230,9 @@ mod tests {
     async fn strict_security_headers() {
         let r = app().client().get("/health").send().await;
         assert_eq!(r.header("x-frame-options"), Some("DENY"));
-        assert_eq!(r.header("content-security-policy"), Some("default-src 'none'; frame-ancestors 'none'"));
+        assert_eq!(
+            r.header("content-security-policy"),
+            Some("default-src 'none'; frame-ancestors 'none'")
+        );
     }
 }

@@ -32,7 +32,10 @@ impl Manifest {
         if let Some((m, p)) = q.split_once(' ') {
             let m = m.trim();
             let p = p.trim();
-            return self.routes.iter().find(|r| r.method.eq_ignore_ascii_case(m) && r.path == p);
+            return self
+                .routes
+                .iter()
+                .find(|r| r.method.eq_ignore_ascii_case(m) && r.path == p);
         }
         self.routes.iter().find(|r| r.id == q || r.handler == q)
     }
@@ -161,6 +164,9 @@ pub struct PolicyView {
     pub timeout_ms: Option<u64>,
     /// Rate limit.
     pub rate_limit: Option<RateLimitView>,
+    /// App-wide ceiling enforced in addition to `rate_limit`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate_limit_ceiling: Option<RateLimitView>,
     /// Provenance of each effective setting, e.g. `auth=required <- app defaults`.
     pub provenance: Vec<String>,
     /// Runtime checks executed for this route, in order.
@@ -174,6 +180,26 @@ pub struct RateLimitView {
     pub requests: u32,
     /// Window length in milliseconds.
     pub per_ms: u64,
-    /// Bucket key: `ip` or `principal`.
+    /// Bucket key: `ip` or `principal`. Client identities are never exported.
     pub key: String,
+    /// Always `token_bucket`: a burst of `requests`, refilled continuously over `per_ms`.
+    #[serde(default = "token_bucket")]
+    pub algorithm: String,
+    /// Bucket sharing: `route`, `group` or `app`.
+    #[serde(default = "route_scope")]
+    pub scope: String,
+    /// For shared buckets, the declaration that owns the bucket (e.g. ``group `/api` ``).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shared_by: Option<String>,
+    /// Whether responses carry `RateLimit`/`RateLimit-Policy` headers.
+    #[serde(default)]
+    pub headers: bool,
+}
+
+fn token_bucket() -> String {
+    "token_bucket".to_owned()
+}
+
+fn route_scope() -> String {
+    "route".to_owned()
 }

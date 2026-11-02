@@ -85,6 +85,8 @@ pub struct RouteRuntime {
     pub checks: Vec<Check>,
     /// Target.
     pub target: Target,
+    /// Rate limits resolved at startup (`None` when the route is not rate limited).
+    pub(crate) rate: Option<crate::policy::rate_limit::RouteRate>,
 }
 
 #[derive(Debug)]
@@ -143,7 +145,10 @@ impl Router {
             });
             let slot = &mut e[r.method.index()];
             if slot.is_some() {
-                return Err(RouterError::Duplicate { method: r.method.as_str(), path: r.path.clone() });
+                return Err(RouterError::Duplicate {
+                    method: r.method.as_str(),
+                    path: r.path.clone(),
+                });
             }
             *slot = Some(r.index);
         }
@@ -159,11 +164,14 @@ impl Router {
                     allow.push(m.as_str());
                 }
             }
-            let allow =
-                HeaderValue::from_str(&allow.join(", ")).unwrap_or_else(|_| HeaderValue::from_static("OPTIONS"));
+            let allow = HeaderValue::from_str(&allow.join(", "))
+                .unwrap_or_else(|_| HeaderValue::from_static("OPTIONS"));
             inner
                 .insert(path, PathEntry { methods, allow })
-                .map_err(|source| RouterError::Insert { path: path.to_owned(), source })?;
+                .map_err(|source| RouterError::Insert {
+                    path: path.to_owned(),
+                    source,
+                })?;
         }
         Ok(Router { inner })
     }
@@ -175,9 +183,11 @@ impl Router {
         let entry = m.value;
         let wanted = Method::from_http(method);
         let idx = match wanted {
-            Some(w) => {
-                entry.methods[w.index()].or(if w == Method::Head { entry.methods[Method::Get.index()] } else { None })
-            }
+            Some(w) => entry.methods[w.index()].or(if w == Method::Head {
+                entry.methods[Method::Get.index()]
+            } else {
+                None
+            }),
             None => None,
         };
         match idx {
@@ -213,7 +223,9 @@ pub fn canonicalise(path: &str) -> Result<(String, Vec<String>), String> {
         return Err(format!("route path `{path}` must not contain `//`"));
     }
     if path.contains(['?', '#']) || path.chars().any(char::is_whitespace) {
-        return Err(format!("route path `{path}` must not contain `?`, `#` or whitespace"));
+        return Err(format!(
+            "route path `{path}` must not contain `?`, `#` or whitespace"
+        ));
     }
     if path.contains("{{") || path.contains("}}") {
         return Err("escaped braces `{{`/`}}` are not supported in Poring route paths".into());
@@ -267,7 +279,9 @@ pub fn canonicalise(path: &str) -> Result<(String, Vec<String>), String> {
                     return Err(format!("route path `{path}`: duplicate parameter `{n}`"));
                 }
                 if catch_all && !last {
-                    return Err(format!("route path `{path}`: catch-all `{{*{n}}}` must be the last segment"));
+                    return Err(format!(
+                        "route path `{path}`: catch-all `{{*{n}}}` must be the last segment"
+                    ));
                 }
                 params.push(n.to_owned());
                 if catch_all {
@@ -281,16 +295,22 @@ pub fn canonicalise(path: &str) -> Result<(String, Vec<String>), String> {
         }
     }
     if params.len() > crate::ctx::MAX_PARAMS {
-        return Err(format!("route path `{path}` has more than {} parameters", crate::ctx::MAX_PARAMS));
+        return Err(format!(
+            "route path `{path}` has more than {} parameters",
+            crate::ctx::MAX_PARAMS
+        ));
     }
     Ok((out, params))
 }
 
 /// Validates a static group prefix (the rules `poring_app!` applies to `group(..)`).
 pub fn validate_prefix(prefix: &str) -> Result<String, String> {
-    let (canon, params) = canonicalise(prefix).map_err(|e| e.replacen("route path", "group prefix", 1))?;
+    let (canon, params) =
+        canonicalise(prefix).map_err(|e| e.replacen("route path", "group prefix", 1))?;
     if !params.is_empty() {
-        return Err(format!("group prefix `{prefix}` must be static (no parameters)"));
+        return Err(format!(
+            "group prefix `{prefix}` must be static (no parameters)"
+        ));
     }
     if canon.len() > 1 && canon.ends_with('/') {
         return Err(format!("group prefix `{prefix}` must not end with `/`"));
@@ -304,9 +324,25 @@ mod tests {
 
     #[test]
     fn canonical_runtime_paths() {
-        assert_eq!(canonicalise("/users/{id}").unwrap(), ("/users/{id}".into(), vec!["id".into()]));
-        assert_eq!(canonicalise("/users/:id/*").unwrap().0, "/users/{id}/{*rest}");
-        for bad in ["users", "/a//b", "/a/{*r}/b", "/a/{1x}", "/a/x{id}", "/a/%2F", "/a/..", "/a?b", "/{a}/{a}"] {
+        assert_eq!(
+            canonicalise("/users/{id}").unwrap(),
+            ("/users/{id}".into(), vec!["id".into()])
+        );
+        assert_eq!(
+            canonicalise("/users/:id/*").unwrap().0,
+            "/users/{id}/{*rest}"
+        );
+        for bad in [
+            "users",
+            "/a//b",
+            "/a/{*r}/b",
+            "/a/{1x}",
+            "/a/x{id}",
+            "/a/%2F",
+            "/a/..",
+            "/a?b",
+            "/{a}/{a}",
+        ] {
             assert!(canonicalise(bad).is_err(), "{bad}");
         }
         assert!(validate_prefix("/api").is_ok());

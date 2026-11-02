@@ -49,7 +49,9 @@ pub fn decode(raw: &str) -> Result<Cow<'_, str>, DecodeError> {
     if !any {
         return Ok(Cow::Borrowed(raw));
     }
-    percent_encoding::percent_decode_str(raw).decode_utf8().map_err(|_| DecodeError)
+    percent_encoding::percent_decode_str(raw)
+        .decode_utf8()
+        .map_err(|_| DecodeError)
 }
 
 impl<T: PoringSchema> ExtractorMeta for Path<T> {
@@ -145,7 +147,11 @@ impl<'de, 'p, 'v> de::Deserializer<'de> for PathDe<'p, 'v> {
 
     fn deserialize_any<V: Visitor<'de>>(self, v: V) -> Result<V::Value, PathError> {
         if self.params.len() == 1 {
-            ValueDe { name: self.params[0].0, val: &self.params[0].1 }.deserialize_any(v)
+            ValueDe {
+                name: self.params[0].0,
+                val: &self.params[0].1,
+            }
+            .deserialize_any(v)
         } else {
             self.deserialize_map(v)
         }
@@ -155,16 +161,26 @@ impl<'de, 'p, 'v> de::Deserializer<'de> for PathDe<'p, 'v> {
         v.visit_some(self)
     }
 
-    fn deserialize_unit_struct<V: Visitor<'de>>(self, _: &'static str, v: V) -> Result<V::Value, PathError> {
+    fn deserialize_unit_struct<V: Visitor<'de>>(
+        self,
+        _: &'static str,
+        v: V,
+    ) -> Result<V::Value, PathError> {
         v.visit_unit()
     }
 
-    fn deserialize_newtype_struct<V: Visitor<'de>>(self, _: &'static str, v: V) -> Result<V::Value, PathError> {
+    fn deserialize_newtype_struct<V: Visitor<'de>>(
+        self,
+        _: &'static str,
+        v: V,
+    ) -> Result<V::Value, PathError> {
         v.visit_newtype_struct(self)
     }
 
     fn deserialize_seq<V: Visitor<'de>>(self, v: V) -> Result<V::Value, PathError> {
-        v.visit_seq(Seq { it: self.params.iter() })
+        v.visit_seq(Seq {
+            it: self.params.iter(),
+        })
     }
 
     fn deserialize_tuple<V: Visitor<'de>>(self, len: usize, v: V) -> Result<V::Value, PathError> {
@@ -187,7 +203,10 @@ impl<'de, 'p, 'v> de::Deserializer<'de> for PathDe<'p, 'v> {
     }
 
     fn deserialize_map<V: Visitor<'de>>(self, v: V) -> Result<V::Value, PathError> {
-        v.visit_map(Map { it: self.params.iter(), value: None })
+        v.visit_map(Map {
+            it: self.params.iter(),
+            value: None,
+        })
     }
 
     fn deserialize_struct<V: Visitor<'de>>(
@@ -207,7 +226,9 @@ impl<'de, 'p, 'v> de::Deserializer<'de> for PathDe<'p, 'v> {
     ) -> Result<V::Value, PathError> {
         match self.params {
             [(_, val)] => v.visit_enum(val.as_ref().to_owned().into_deserializer()),
-            _ => Err(PathError("expected exactly 1 path parameter for an enum".into())),
+            _ => Err(PathError(
+                "expected exactly 1 path parameter for an enum".into(),
+            )),
         }
     }
 
@@ -222,7 +243,10 @@ struct Seq<'p, 'v> {
 
 impl<'de> de::SeqAccess<'de> for Seq<'_, '_> {
     type Error = PathError;
-    fn next_element_seed<T: de::DeserializeSeed<'de>>(&mut self, seed: T) -> Result<Option<T::Value>, PathError> {
+    fn next_element_seed<T: de::DeserializeSeed<'de>>(
+        &mut self,
+        seed: T,
+    ) -> Result<Option<T::Value>, PathError> {
         match self.it.next() {
             Some((name, val)) => seed.deserialize(ValueDe { name, val }).map(Some),
             None => Ok(None),
@@ -237,16 +261,23 @@ struct Map<'p, 'v> {
 
 impl<'de> de::MapAccess<'de> for Map<'_, '_> {
     type Error = PathError;
-    fn next_key_seed<K: de::DeserializeSeed<'de>>(&mut self, seed: K) -> Result<Option<K::Value>, PathError> {
+    fn next_key_seed<K: de::DeserializeSeed<'de>>(
+        &mut self,
+        seed: K,
+    ) -> Result<Option<K::Value>, PathError> {
         match self.it.next() {
             Some(kv) => {
                 self.value = Some(kv);
-                seed.deserialize(kv.0.to_owned().into_deserializer()).map(Some)
+                seed.deserialize(kv.0.to_owned().into_deserializer())
+                    .map(Some)
             }
             None => Ok(None),
         }
     }
-    fn next_value_seed<V: de::DeserializeSeed<'de>>(&mut self, seed: V) -> Result<V::Value, PathError> {
+    fn next_value_seed<V: de::DeserializeSeed<'de>>(
+        &mut self,
+        seed: V,
+    ) -> Result<V::Value, PathError> {
         match self.value.take() {
             Some((name, val)) => seed.deserialize(ValueDe { name, val }),
             None => Err(PathError("value without key".into())),
@@ -301,7 +332,11 @@ impl<'de> de::Deserializer<'de> for ValueDe<'_> {
     fn deserialize_option<V: Visitor<'de>>(self, v: V) -> Result<V::Value, PathError> {
         v.visit_some(self)
     }
-    fn deserialize_newtype_struct<V: Visitor<'de>>(self, _: &'static str, v: V) -> Result<V::Value, PathError> {
+    fn deserialize_newtype_struct<V: Visitor<'de>>(
+        self,
+        _: &'static str,
+        v: V,
+    ) -> Result<V::Value, PathError> {
         v.visit_newtype_struct(self)
     }
     fn deserialize_enum<V: Visitor<'de>>(
@@ -350,6 +385,12 @@ mod tests {
             a: u8,
         }
         let p: P = serde::Deserialize::deserialize(PathDe { params: &two }).unwrap();
-        assert_eq!(p, P { a: 1, b: "x".into() });
+        assert_eq!(
+            p,
+            P {
+                a: 1,
+                b: "x".into()
+            }
+        );
     }
 }

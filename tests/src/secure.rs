@@ -22,20 +22,28 @@ impl TableAuth {
     /// The standard fixture identities.
     pub fn fixture() -> Self {
         let mut t = HashMap::new();
-        t.insert("reader-token".to_owned(), Identity::new("alice", Credential::Bearer).with_scopes(["notes:read"]));
+        t.insert(
+            "reader-token".to_owned(),
+            Identity::new("alice", Credential::Bearer).with_scopes(["notes:read"]),
+        );
         t.insert(
             "writer-token".to_owned(),
             Identity::new("bob", Credential::Bearer).with_scopes(["notes:read", "notes:write"]),
         );
         t.insert(
             "admin-token".to_owned(),
-            Identity::new("root", Credential::Bearer).with_scopes(["notes:read", "notes:write"]).with_roles(["admin"]),
+            Identity::new("root", Credential::Bearer)
+                .with_scopes(["notes:read", "notes:write"])
+                .with_roles(["admin"]),
         );
         t.insert(
             "session-bob".to_owned(),
             Identity::new("bob", Credential::Cookie).with_scopes(["notes:read", "notes:write"]),
         );
-        TableAuth { table: Arc::new(t), fail: false }
+        TableAuth {
+            table: Arc::new(t),
+            fail: false,
+        }
     }
 }
 
@@ -47,7 +55,12 @@ impl Authenticator for TableAuth {
             return Err(AuthError::Unavailable("table offline".into()));
         }
         if let Some(t) = req.bearer_token() {
-            return self.table.get(t).cloned().map(Some).ok_or(AuthError::Invalid);
+            return self
+                .table
+                .get(t)
+                .cloned()
+                .map(Some)
+                .ok_or(AuthError::Invalid);
         }
         if let Some(sid) = req.cookie("sid") {
             return Ok(self.table.get(sid).cloned());
@@ -94,7 +107,12 @@ pub struct SecureState {
 /// Records that user code ran.
 #[poring::hook]
 async fn record(cx: &mut Ctx<'_, SecureState>) {
-    cx.state().events.0.lock().unwrap_or_else(|p| p.into_inner()).push(format!("hook:{}", cx.route_id()));
+    cx.state()
+        .events
+        .0
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .push(format!("hook:{}", cx.route_id()));
 }
 
 /// Liveness probe: an explicit, documented public exception.
@@ -119,8 +137,13 @@ async fn create_note(
     State(n): State<Notes>,
     Json(new): Json<NewNote>,
 ) -> (StatusCode, Json<Note>) {
-    let note = Note { owner: who.subject.clone(), text: new.text };
-    n.0.lock().unwrap_or_else(|p| p.into_inner()).push(note.clone());
+    let note = Note {
+        owner: who.subject.clone(),
+        text: new.text,
+    };
+    n.0.lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .push(note.clone());
     (StatusCode::CREATED, Json(note))
 }
 
@@ -146,7 +169,10 @@ async fn webhook(body: Bytes) -> String {
 /// Admin-only stats.
 #[poring::get("/stats")]
 async fn admin_stats(State(n): State<Notes>) -> String {
-    n.0.lock().unwrap_or_else(|p| p.into_inner()).len().to_string()
+    n.0.lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .len()
+        .to_string()
 }
 
 poring_app! {

@@ -7,8 +7,13 @@ rust-version.workspace = true
 license.workspace = true
 publish = false
 
+[features]
+default = ["wasm"]
+## The `wasm_live` example (Wasmtime, hot reload and the guest kit).
+wasm = ["poring/wasm", "poring/hot-reload", "poring/guest-kit"]
+
 [dependencies]
-poring = { workspace = true, features = ["websocket", "multipart", "wasm", "hot-reload", "guest-kit"] }
+poring = { workspace = true, features = ["websocket", "multipart"] }
 tokio = { workspace = true, features = ["full"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -47,6 +52,7 @@ path = "tracing_graph.rs"
 [[example]]
 name = "wasm_live"
 path = "wasm_live.rs"
+required-features = ["wasm"]
 
 [[example]]
 name = "quickstart"
@@ -63,3 +69,7 @@ path = "attribute_macros.rs"
 [[example]]
 name = "fluent_api"
 path = "fluent_api.rs"
+
+[[example]]
+name = "rate_limits"
+path = "rate_limits.rs"

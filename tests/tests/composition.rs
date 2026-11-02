@@ -40,12 +40,17 @@ mod hooks {
     #[poring::hook]
     pub async fn group_before(cx: &mut Ctx<'_, AppState>) -> Result<(), ApiError> {
         cx.state().log.push("group.before");
-        if cx.headers().contains_key("x-deny") { Err(ApiError::forbidden("denied by group hook")) } else { Ok(()) }
+        if cx.headers().contains_key("x-deny") {
+            Err(ApiError::forbidden("denied by group hook"))
+        } else {
+            Ok(())
+        }
     }
     #[poring::hook]
     pub async fn group_after(cx: &Ctx<'_, AppState>, res: &mut Response) {
         cx.state().log.push("group.after");
-        res.headers_mut().insert("x-group", HeaderValue::from_static("v1"));
+        res.headers_mut()
+            .insert("x-group", HeaderValue::from_static("v1"));
     }
     #[poring::hook]
     pub async fn local_before(cx: &mut Ctx<'_, AppState>) {
@@ -104,7 +109,10 @@ async fn plain(State(log): State<Log>) -> &'static str {
 }
 
 #[poring::post("/articles", before = [hooks::local_before], after = [hooks::local_after])]
-async fn create_article(State(log): State<Log>, Json(a): Json<Article>) -> (StatusCode, Json<Article>) {
+async fn create_article(
+    State(log): State<Log>,
+    Json(a): Json<Article>,
+) -> (StatusCode, Json<Article>) {
     log.push("handler");
     (StatusCode::CREATED, Json(a))
 }
@@ -132,7 +140,13 @@ poring_app! {
 
 fn app() -> (poring::App<Composed>, Log) {
     let log = Log::default();
-    let app = Composed::builder().state(AppState { log: log.clone(), metrics: Metrics::default() }).build().unwrap();
+    let app = Composed::builder()
+        .state(AppState {
+            log: log.clone(),
+            metrics: Metrics::default(),
+        })
+        .build()
+        .unwrap();
     (app, log)
 }
 
@@ -140,12 +154,24 @@ fn app() -> (poring::App<Composed>, Log) {
 async fn hook_order_global_group_local() {
     let (app, log) = app();
     let c = app.client();
-    let r = c.post("/v1/articles").json(&serde_json::json!({"title": "Hello", "tags": ["a"]})).send().await;
+    let r = c
+        .post("/v1/articles")
+        .json(&serde_json::json!({"title": "Hello", "tags": ["a"]}))
+        .send()
+        .await;
     assert_eq!(r.status, 201, "{}", r.text());
     assert_eq!(r.header("x-group"), Some("v1"));
     assert_eq!(
         log.take(),
-        ["global.before", "group.before", "local.before", "handler", "local.after", "group.after", "global.after"]
+        [
+            "global.before",
+            "group.before",
+            "local.before",
+            "handler",
+            "local.after",
+            "group.after",
+            "global.after"
+        ]
     );
 }
 
@@ -155,17 +181,37 @@ async fn short_circuit_skips_handler_but_runs_after_hooks() {
     let r = app.client().get("/v1").header("x-deny", "1").send().await;
     assert_eq!(r.status, 403);
     assert_eq!(r.header("x-group"), Some("v1"));
-    assert_eq!(log.take(), ["global.before", "group.before", "group.after", "global.after"]);
+    assert_eq!(
+        log.take(),
+        [
+            "global.before",
+            "group.before",
+            "group.after",
+            "global.after"
+        ]
+    );
 }
 
 #[tokio::test]
 async fn validation_rejection_runs_after_hooks_not_handler() {
     let (app, log) = app();
-    let r = app.client().post("/v1/articles").json(&serde_json::json!({"title": "x", "tags": []})).send().await;
+    let r = app
+        .client()
+        .post("/v1/articles")
+        .json(&serde_json::json!({"title": "x", "tags": []}))
+        .send()
+        .await;
     assert_eq!(r.status, 422);
     assert_eq!(
         log.take(),
-        ["global.before", "group.before", "local.before", "local.after", "group.after", "global.after"]
+        [
+            "global.before",
+            "group.before",
+            "local.before",
+            "local.after",
+            "group.after",
+            "global.after"
+        ]
     );
 }
 
@@ -173,7 +219,11 @@ async fn validation_rejection_runs_after_hooks_not_handler() {
 async fn group_prefix_root_and_ungrouped_routes() {
     let (app, log) = app();
     let c = app.client();
-    assert_eq!(c.get("/v1").send().await.text(), "v1 root", "`/v1` + `/` = `/v1`");
+    assert_eq!(
+        c.get("/v1").send().await.text(),
+        "v1 root",
+        "`/v1` + `/` = `/v1`"
+    );
     assert_eq!(c.get("/v1/").send().await.status, 404);
     assert_eq!(c.get("/plain").send().await.text(), "plain");
     assert_eq!(
@@ -199,10 +249,25 @@ async fn plugin_routes_hooks_state_and_policy() {
     // The plugin's `count` hook ran for both requests (including this one, before the handler).
     assert_eq!(c.get("/metrics/count").send().await.text(), "2");
     // Global hooks wrap plugin routes too.
-    assert_eq!(log.take(), ["global.before", "global.after", "global.before", "global.after"]);
+    assert_eq!(
+        log.take(),
+        [
+            "global.before",
+            "global.after",
+            "global.before",
+            "global.after"
+        ]
+    );
     let m = Composed::manifest().unwrap();
     let r = m.find("GET /metrics/count").unwrap();
     assert_eq!(r.group.as_deref(), Some("MetricsPlugin"));
     assert_eq!(r.policy.rate_limit.as_ref().unwrap().requests, 100);
-    assert_eq!(r.hooks.before.iter().map(|h| h.scope.as_str()).collect::<Vec<_>>(), ["global", "plugin"]);
+    assert_eq!(
+        r.hooks
+            .before
+            .iter()
+            .map(|h| h.scope.as_str())
+            .collect::<Vec<_>>(),
+        ["global", "plugin"]
+    );
 }

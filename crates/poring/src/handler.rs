@@ -36,7 +36,12 @@ macro_rules! route_methods {
                     "poring: GET handlers cannot read the request body"
                 )
             };
-            self.push_route($crate::handler::NativeRoute::new($crate::descriptor::Method::Get, path, None, handler))
+            self.push_route($crate::handler::NativeRoute::new(
+                $crate::descriptor::Method::Get,
+                path,
+                None,
+                handler,
+            ))
         }
 
         /// Registers a `POST` route.
@@ -46,7 +51,12 @@ macro_rules! route_methods {
             H: $crate::handler::Handler<Args, $S>,
             Args: 'static,
         {
-            self.push_route($crate::handler::NativeRoute::new($crate::descriptor::Method::Post, path, None, handler))
+            self.push_route($crate::handler::NativeRoute::new(
+                $crate::descriptor::Method::Post,
+                path,
+                None,
+                handler,
+            ))
         }
 
         /// Registers a `PUT` route.
@@ -56,7 +66,12 @@ macro_rules! route_methods {
             H: $crate::handler::Handler<Args, $S>,
             Args: 'static,
         {
-            self.push_route($crate::handler::NativeRoute::new($crate::descriptor::Method::Put, path, None, handler))
+            self.push_route($crate::handler::NativeRoute::new(
+                $crate::descriptor::Method::Put,
+                path,
+                None,
+                handler,
+            ))
         }
 
         /// Registers a `PATCH` route.
@@ -66,7 +81,12 @@ macro_rules! route_methods {
             H: $crate::handler::Handler<Args, $S>,
             Args: 'static,
         {
-            self.push_route($crate::handler::NativeRoute::new($crate::descriptor::Method::Patch, path, None, handler))
+            self.push_route($crate::handler::NativeRoute::new(
+                $crate::descriptor::Method::Patch,
+                path,
+                None,
+                handler,
+            ))
         }
 
         /// Registers a `DELETE` route.
@@ -76,7 +96,12 @@ macro_rules! route_methods {
             H: $crate::handler::Handler<Args, $S>,
             Args: 'static,
         {
-            self.push_route($crate::handler::NativeRoute::new($crate::descriptor::Method::Delete, path, None, handler))
+            self.push_route($crate::handler::NativeRoute::new(
+                $crate::descriptor::Method::Delete,
+                path,
+                None,
+                handler,
+            ))
         }
 
         /// Registers an explicit `HEAD` route (otherwise `HEAD` is served by the `GET` route).
@@ -92,7 +117,12 @@ macro_rules! route_methods {
                     "poring: HEAD handlers cannot read the request body"
                 )
             };
-            self.push_route($crate::handler::NativeRoute::new($crate::descriptor::Method::Head, path, None, handler))
+            self.push_route($crate::handler::NativeRoute::new(
+                $crate::descriptor::Method::Head,
+                path,
+                None,
+                handler,
+            ))
         }
 
         /// Registers an explicit `OPTIONS` route (otherwise `OPTIONS` is answered automatically).
@@ -102,18 +132,30 @@ macro_rules! route_methods {
             H: $crate::handler::Handler<Args, $S>,
             Args: 'static,
         {
-            self.push_route($crate::handler::NativeRoute::new($crate::descriptor::Method::Options, path, None, handler))
+            self.push_route($crate::handler::NativeRoute::new(
+                $crate::descriptor::Method::Options,
+                path,
+                None,
+                handler,
+            ))
         }
 
         /// Registers a route for `method`. Body-reading handlers on `GET`/`HEAD` are
         /// rejected when the app is built.
         #[track_caller]
-        pub fn route<H, Args>(self, method: $crate::descriptor::Method, path: &str, handler: H) -> Self
+        pub fn route<H, Args>(
+            self,
+            method: $crate::descriptor::Method,
+            path: &str,
+            handler: H,
+        ) -> Self
         where
             H: $crate::handler::Handler<Args, $S>,
             Args: 'static,
         {
-            self.push_route($crate::handler::NativeRoute::new(method, path, None, handler))
+            self.push_route($crate::handler::NativeRoute::new(
+                method, path, None, handler,
+            ))
         }
 
         /// Registers a route with its own [`Policy`](crate::policy::Policy), merged after
@@ -130,7 +172,12 @@ macro_rules! route_methods {
             H: $crate::handler::Handler<Args, $S>,
             Args: 'static,
         {
-            self.push_route($crate::handler::NativeRoute::new(method, path, Some(policy), handler))
+            self.push_route($crate::handler::NativeRoute::new(
+                method,
+                path,
+                Some(policy),
+                handler,
+            ))
         }
     };
 }
@@ -168,7 +215,10 @@ pub trait Handler<Args, S>: Send + Sync + 'static {
 
     /// Extracts the arguments, calls the handler and converts its output.
     #[doc(hidden)]
-    fn __call<'a, 'c>(&'c self, cx: &'c mut Ctx<'a, S>) -> impl Future<Output = Response> + Send + 'c;
+    fn __call<'a, 'c>(
+        &'c self,
+        cx: &'c mut Ctx<'a, S>,
+    ) -> impl Future<Output = Response> + Send + 'c;
 }
 
 fn desc<T: ExtractorMeta>() -> ExtractorDesc {
@@ -256,7 +306,10 @@ where
     }
 
     #[allow(clippy::manual_async_fn)] // Keeps the `Send + 'c` contract of the trait explicit.
-    fn __call<'a, 'c>(&'c self, cx: &'c mut Ctx<'a, S>) -> impl Future<Output = Response> + Send + 'c {
+    fn __call<'a, 'c>(
+        &'c self,
+        cx: &'c mut Ctx<'a, S>,
+    ) -> impl Future<Output = Response> + Send + 'c {
         async move {
             cx.mark(Stage::Handler);
             (self)().await.into_response()
@@ -316,8 +369,10 @@ impl HookOutcome for Option<Response> {
     }
 }
 
-pub(crate) type BeforeFn<S> = Box<dyn for<'a, 'b> Fn(&'b mut Ctx<'a, S>) -> Result<(), Response> + Send + Sync>;
-pub(crate) type AfterFn<S> = Box<dyn for<'a, 'b> Fn(&'b Ctx<'a, S>, &'b mut Response) + Send + Sync>;
+pub(crate) type BeforeFn<S> =
+    Box<dyn for<'a, 'b> Fn(&'b mut Ctx<'a, S>) -> Result<(), Response> + Send + Sync>;
+pub(crate) type AfterFn<S> =
+    Box<dyn for<'a, 'b> Fn(&'b Ctx<'a, S>, &'b mut Response) + Send + Sync>;
 
 /// Named hooks of one level.
 pub(crate) struct Hooks<S> {
@@ -327,7 +382,10 @@ pub(crate) struct Hooks<S> {
 
 impl<S> Default for Hooks<S> {
     fn default() -> Self {
-        Hooks { before: Vec::new(), after: Vec::new() }
+        Hooks {
+            before: Vec::new(),
+            after: Vec::new(),
+        }
     }
 }
 
@@ -341,7 +399,8 @@ impl<S> Hooks<S> {
         O: HookOutcome,
     {
         let name = hook_name::<F>("before");
-        self.before.push((name, Box::new(move |cx| f(cx).into_outcome())));
+        self.before
+            .push((name, Box::new(move |cx| f(cx).into_outcome())));
     }
 
     pub(crate) fn add_after<F>(&mut self, f: F)
@@ -417,7 +476,10 @@ impl<S: 'static> NativeRoute<S> {
             extractors: H::__extractors(),
             reads_body: H::READS_BODY,
             responses: H::__responses,
-            source: SourceLoc { file: loc.file().replace('\\', "/"), line: loc.line() },
+            source: SourceLoc {
+                file: loc.file().replace('\\', "/"),
+                line: loc.line(),
+            },
             handler: Box::new(Erased(handler, PhantomData)),
         }
     }
@@ -429,6 +491,7 @@ impl<S: 'static> NativeRoute<S> {
 pub struct Group<S> {
     pub(crate) prefix: String,
     pub(crate) policy: Policy,
+    pub(crate) rate_limit: Option<crate::policy::RateLimit>,
     pub(crate) hooks: Hooks<S>,
     pub(crate) routes: Vec<NativeRoute<S>>,
     pub(crate) source: SourceLoc,
@@ -436,18 +499,36 @@ pub struct Group<S> {
 
 impl<S> std::fmt::Debug for Group<S> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Group").field("prefix", &self.prefix).field("routes", &self.routes.len()).finish()
+        f.debug_struct("Group")
+            .field("prefix", &self.prefix)
+            .field("routes", &self.routes.len())
+            .finish()
     }
 }
 
 impl<S: Send + Sync + 'static> Group<S> {
     pub(crate) fn new(prefix: &str, source: SourceLoc) -> Self {
-        Group { prefix: prefix.to_owned(), policy: Policy::new(), hooks: Hooks::default(), routes: Vec::new(), source }
+        Group {
+            prefix: prefix.to_owned(),
+            policy: Policy::new(),
+            rate_limit: None,
+            hooks: Hooks::default(),
+            routes: Vec::new(),
+            source,
+        }
     }
 
     /// Sets the group policy (merged between the app defaults and each route).
     pub fn policy(mut self, policy: Policy) -> Self {
         self.policy = policy;
+        self
+    }
+
+    /// The group's rate limit, inherited by routes that do not declare their own. With
+    /// [`RateScope::Group`](crate::policy::RateScope::Group) every such route shares one
+    /// bucket per client; otherwise each route has its own.
+    pub fn rate_limit(mut self, limit: crate::policy::RateLimit) -> Self {
+        self.rate_limit = Some(limit);
         self
     }
 
@@ -485,6 +566,8 @@ pub(crate) struct NativeSet<S> {
     pub(crate) routes: Vec<(Option<usize>, NativeRoute<S>)>,
     pub(crate) groups: Vec<NativeGroup<S>>,
     pub(crate) hooks: Hooks<S>,
+    /// Configuration errors reported by `build()`.
+    pub(crate) errors: Vec<String>,
 }
 
 pub(crate) struct NativeGroup<S> {
@@ -496,19 +579,44 @@ pub(crate) struct NativeGroup<S> {
 
 impl<S> Default for NativeSet<S> {
     fn default() -> Self {
-        NativeSet { routes: Vec::new(), groups: Vec::new(), hooks: Hooks::default() }
+        NativeSet {
+            routes: Vec::new(),
+            groups: Vec::new(),
+            hooks: Hooks::default(),
+            errors: Vec::new(),
+        }
     }
 }
 
 impl<S> NativeSet<S> {
     pub(crate) fn is_empty(&self) -> bool {
-        self.routes.is_empty() && self.groups.is_empty() && self.hooks.before.is_empty() && self.hooks.after.is_empty()
+        self.routes.is_empty()
+            && self.groups.is_empty()
+            && self.hooks.before.is_empty()
+            && self.hooks.after.is_empty()
     }
 
     pub(crate) fn add_group(&mut self, g: Group<S>) {
         let idx = self.groups.len();
-        self.groups.push(NativeGroup { prefix: g.prefix, policy: g.policy, hooks: g.hooks, source: g.source });
-        self.routes.extend(g.routes.into_iter().map(|r| (Some(idx), r)));
+        let policy = match g.rate_limit {
+            Some(_) if g.policy.has_rate_limit() => {
+                self.errors.push(format!(
+                    "group `{}`: the rate limit is declared by both `.rate_limit(..)` and `.policy(..)`",
+                    g.prefix
+                ));
+                g.policy
+            }
+            Some(limit) => g.policy.with_rate_limit(limit),
+            None => g.policy,
+        };
+        self.groups.push(NativeGroup {
+            prefix: g.prefix,
+            policy,
+            hooks: g.hooks,
+            source: g.source,
+        });
+        self.routes
+            .extend(g.routes.into_iter().map(|r| (Some(idx), r)));
     }
 }
 
@@ -534,7 +642,11 @@ pub(crate) fn pretty_type_name(full: &str) -> String {
 
 fn hook_name<F>(kind: &str) -> String {
     let pretty = pretty_type_name(std::any::type_name::<F>());
-    if pretty.contains("closure") { format!("{kind} closure") } else { pretty }
+    if pretty.contains("closure") {
+        format!("{kind} closure")
+    } else {
+        pretty
+    }
 }
 
 #[cfg(test)]
@@ -543,8 +655,14 @@ mod tests {
 
     #[test]
     fn pretty_names() {
-        assert_eq!(pretty_type_name("poring::extract::path::Path<alloc::string::String>"), "Path<String>");
-        assert_eq!(pretty_type_name("(u64, core::option::Option<a::B>)"), "(u64, Option<B>)");
+        assert_eq!(
+            pretty_type_name("poring::extract::path::Path<alloc::string::String>"),
+            "Path<String>"
+        );
+        assert_eq!(
+            pretty_type_name("(u64, core::option::Option<a::B>)"),
+            "(u64, Option<B>)"
+        );
         assert_eq!(pretty_type_name("app::main::{{closure}}"), "{{closure}}");
     }
 }

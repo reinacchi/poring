@@ -7,7 +7,7 @@
 
 use std::time::Duration;
 
-use super::{RateKey, RateLimitSpec, TimeoutSpec};
+use super::{RateKey, RateLimit, RateLimitSpec, RateScope, TimeoutSpec};
 
 /// Authentication requirement of one borrowed level.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -83,7 +83,7 @@ pub struct Policy {
     content_types: Vec<String>,
     csrf: Csrf,
     timeout: Option<TimeoutSpec>,
-    rate_limit: Option<RateLimitSpec>,
+    rate_limit: Option<RateLimit>,
 }
 
 impl Policy {
@@ -170,7 +170,9 @@ impl Policy {
 
     /// Request timeout (covers hooks, extraction and the handler).
     pub fn timeout(mut self, timeout: Duration) -> Self {
-        self.timeout = Some(TimeoutSpec::Ms(timeout.as_millis().min(u64::MAX as u128) as u64));
+        self.timeout = Some(TimeoutSpec::Ms(
+            timeout.as_millis().min(u64::MAX as u128) as u64
+        ));
         self
     }
 
@@ -180,11 +182,29 @@ impl Policy {
         self
     }
 
-    /// Token-bucket rate limit of `requests` per `per`, partitioned by `key`.
-    pub fn rate_limit(mut self, requests: u32, per: Duration, key: RateKey) -> Self {
-        let per_ms = per.as_millis().min(u64::MAX as u128) as u64;
-        self.rate_limit = Some(RateLimitSpec { requests, per_ms, key });
+    /// Token-bucket rate limit of `requests` per `per`, partitioned by `key`, with one
+    /// bucket per route.
+    ///
+    /// As in the macro DSL, the most specific level that declares a rate limit replaces
+    /// any inherited one. Use [`Policy::with_rate_limit`] to share buckets across a group
+    /// or the whole app, or `rate_limit_ceiling` on the app builders for a limit that
+    /// applies in addition to every other.
+    pub fn rate_limit(self, requests: u32, per: Duration, key: RateKey) -> Self {
+        let limit = RateLimit::new(requests, per);
+        self.with_rate_limit(match key {
+            RateKey::Ip => limit.by_ip(),
+            RateKey::Principal => limit.by_principal(),
+        })
+    }
+
+    /// Sets a fully configured rate limit (scope and quota headers included).
+    pub fn with_rate_limit(mut self, limit: RateLimit) -> Self {
+        self.rate_limit = Some(limit);
         self
+    }
+
+    pub(crate) fn has_rate_limit(&self) -> bool {
+        self.rate_limit.is_some()
     }
 
     /// Checks rules that the macro DSL enforces within a single level.
@@ -199,7 +219,9 @@ impl Policy {
             return Err("app defaults cannot be public; omit authentication instead".into());
         }
         if self.strict && level == LevelKind::Route {
-            return Err("`deny_anonymous` applies to apps and groups, not individual routes".into());
+            return Err(
+                "`deny_anonymous` applies to apps and groups, not individual routes".into(),
+            );
         }
         if public && self.strict {
             return Err("`deny_anonymous` contradicts `public` at the same level".into());
@@ -212,22 +234,35 @@ impl Policy {
         {
             return Err("a CSRF exemption needs a documented reason".into());
         }
-        if let Some(r) = &self.rate_limit {
-            if r.requests == 0 {
-                return Err("rate_limit count must be > 0".into());
-            }
-            if r.per_ms == 0 {
-                return Err("rate_limit window must be at least 1 ms".into());
+        if let Some(r) = self.rate_limit {
+            let spec = r.to_spec()?;
+            match (spec.scope, level) {
+                (RateScope::Group, LevelKind::App | LevelKind::Route) => {
+                    return Err("a group-scoped rate limit must be declared on a group".into());
+                }
+                (RateScope::App, LevelKind::Group | LevelKind::Route) => {
+                    return Err("an app-scoped rate limit must be declared on the app".into());
+                }
+                _ => {}
             }
         }
-        if self.content_types.iter().any(|c| c.trim().is_empty() || !c.contains('/')) {
+        if self
+            .content_types
+            .iter()
+            .any(|c| c.trim().is_empty() || !c.contains('/'))
+        {
             return Err("content types must look like `type/subtype`".into());
         }
         Ok(())
     }
 
-    pub(crate) fn level(&self) -> Level<'_> {
-        Level {
+    /// The resolver's view. Fails on an invalid rate limit (see [`Policy::validate`]).
+    pub(crate) fn level(&self) -> Result<Level<'_>, String> {
+        let rate_limit = match self.rate_limit {
+            Some(r) => Some(r.to_spec()?),
+            None => None,
+        };
+        Ok(Level {
             auth: match &self.auth {
                 Auth::Inherit => LevelAuth::Inherit,
                 Auth::Required => LevelAuth::Required,
@@ -244,8 +279,8 @@ impl Policy {
                 Csrf::Exempt(r) => LevelCsrf::Exempt(r),
             },
             timeout: self.timeout.unwrap_or(TimeoutSpec::Inherit),
-            rate_limit: self.rate_limit,
-        }
+            rate_limit,
+        })
     }
 
     /// Owned copy of a `const` macro declaration.
@@ -255,7 +290,9 @@ impl Policy {
             auth: match p.auth {
                 AuthSpec::Inherit => Auth::Inherit,
                 AuthSpec::Required => Auth::Required,
-                AuthSpec::Public { reason } => Auth::Public((!reason.is_empty()).then(|| reason.to_owned())),
+                AuthSpec::Public { reason } => {
+                    Auth::Public((!reason.is_empty()).then(|| reason.to_owned()))
+                }
             },
             strict: p.strict,
             scopes: p.scopes.iter().map(|s| (*s).to_owned()).collect(),
@@ -268,7 +305,7 @@ impl Policy {
                 CsrfSpec::Exempt { reason } => Csrf::Exempt(reason.to_owned()),
             },
             timeout: (p.timeout != TimeoutSpec::Inherit).then_some(p.timeout),
-            rate_limit: p.rate_limit,
+            rate_limit: p.rate_limit.as_ref().map(RateLimit::from_spec),
         }
     }
 }
@@ -304,7 +341,12 @@ pub struct Cors {
 
 impl Default for Cors {
     fn default() -> Self {
-        Cors { origins: Vec::new(), credentials: false, headers: Vec::new(), max_age_secs: 600 }
+        Cors {
+            origins: Vec::new(),
+            credentials: false,
+            headers: Vec::new(),
+            max_age_secs: 600,
+        }
     }
 }
 
@@ -352,7 +394,10 @@ impl Cors {
             return Err("CORS needs at least one allowed origin".into());
         }
         if self.credentials && self.origins.iter().any(|o| o == "*") {
-            return Err("credentialed CORS cannot use the wildcard origin `*`; list explicit origins".into());
+            return Err(
+                "credentialed CORS cannot use the wildcard origin `*`; list explicit origins"
+                    .into(),
+            );
         }
         Ok(())
     }

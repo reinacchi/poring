@@ -5,7 +5,7 @@
 //! the offending route named. The same rules are mirrored at runtime by
 //! [`super::resolve()`], and both are covered by tests.
 //!
-//! Checks performed here (see `SECURITY_MODEL.md`):
+//! Checks performed here:
 //! * duplicate `METHOD path` registrations;
 //! * ambiguous paths that differ only in parameter names, and catch-all vs. parameter
 //!   conflicts at the same position;
@@ -15,7 +15,8 @@
 //! * public routes under a strict (`deny_anonymous`) ancestor without a documented
 //!   reason, and public routes silently dropping inherited scopes/roles;
 //! * routes or groups raising an inherited body limit;
-//! * credentialed CORS with a wildcard origin (also rejected earlier by the macro).
+//! * credentialed CORS with a wildcard origin (also rejected earlier by the macro);
+//! * principal-keyed rate limits on routes that are not authenticated.
 
 use crate::descriptor::{AppDescriptor, GroupDescriptor, RouteRef};
 use crate::policy::{AuthSpec, PolicySpec};
@@ -29,7 +30,11 @@ pub struct Msg {
 impl Msg {
     /// Starts a message with the `poring: ` prefix.
     pub const fn new() -> Msg {
-        Msg { buf: [0; 512], len: 0 }.push("poring: ")
+        Msg {
+            buf: [0; 512],
+            len: 0,
+        }
+        .push("poring: ")
     }
 
     /// Appends a string (truncating at capacity, on a char boundary of ASCII text).
@@ -82,7 +87,10 @@ struct PathBuf {
 }
 
 const fn full_path(prefix: &str, path: &str) -> PathBuf {
-    let mut out = PathBuf { b: [0; 512], len: 0 };
+    let mut out = PathBuf {
+        b: [0; 512],
+        len: 0,
+    };
     let p = prefix.as_bytes();
     let mut plen = p.len();
     while plen > 0 && p[plen - 1] == b'/' {
@@ -137,7 +145,11 @@ const fn segment(b: &[u8], len: usize, pos: usize) -> (SegKind, usize, usize) {
         end += 1;
     }
     let kind = if end > pos && b[pos] == b'{' {
-        if end > pos + 1 && b[pos + 1] == b'*' { SegKind::CatchAll } else { SegKind::Param }
+        if end > pos + 1 && b[pos + 1] == b'*' {
+            SegKind::CatchAll
+        } else {
+            SegKind::Param
+        }
     } else {
         SegKind::Static
     };
@@ -219,7 +231,11 @@ struct EffAuth {
     route_public: bool,
 }
 
-const fn eff_auth(app: &AppDescriptor, group: Option<&GroupDescriptor>, route: &PolicySpec) -> EffAuth {
+const fn eff_auth(
+    app: &AppDescriptor,
+    group: Option<&GroupDescriptor>,
+    route: &PolicySpec,
+) -> EffAuth {
     let mut auth = app.defaults.auth;
     let mut strict = app.defaults.strict;
     let mut inherited_reqs = !app.defaults.scopes.is_empty() || !app.defaults.roles.is_empty();
@@ -228,21 +244,26 @@ const fn eff_auth(app: &AppDescriptor, group: Option<&GroupDescriptor>, route: &
             auth = g.policy.auth;
         }
         strict = strict || g.policy.strict;
-        inherited_reqs = inherited_reqs || !g.policy.scopes.is_empty() || !g.policy.roles.is_empty();
+        inherited_reqs =
+            inherited_reqs || !g.policy.scopes.is_empty() || !g.policy.roles.is_empty();
     }
     let route_public = matches!(route.auth, AuthSpec::Public { .. });
     if !matches!(route.auth, AuthSpec::Inherit) {
         auth = route.auth;
     }
-    // A route declaring `strict` itself is meaningless for its own publicness; strictness
-    // constrains descendants, and a route has none, but `deny_anonymous` on a route also
-    // sets auth = required, which the macro emits explicitly.
+    // `strict` on a route constrains nothing (a route has no descendants).
     let (required, reason_given) = match auth {
         AuthSpec::Inherit => (app.has_authenticator, false),
         AuthSpec::Required => (true, false),
         AuthSpec::Public { reason } => (false, !reason.is_empty()),
     };
-    EffAuth { required, public_reason_given: reason_given, strict_ancestor: strict, inherited_reqs, route_public }
+    EffAuth {
+        required,
+        public_reason_given: reason_given,
+        strict_ancestor: strict,
+        inherited_reqs,
+        route_public,
+    }
 }
 
 const fn min_limit(a: Option<u64>, b: Option<u64>) -> Option<u64> {
@@ -298,7 +319,6 @@ pub const fn check_app(app: &AppDescriptor) {
         }
     }
 
-    // Group-level checks.
     let mut gi = 0;
     while gi < app.groups.len() {
         let g = &app.groups[gi];
@@ -352,6 +372,20 @@ pub const fn check_app(app: &AppDescriptor) {
             k += 1;
         }
 
+        let rate = match (r.desc.policy.rate_limit, group) {
+            (Some(rl), _) => Some(rl),
+            (None, Some(g)) if g.policy.rate_limit.is_some() => g.policy.rate_limit,
+            _ => app.defaults.rate_limit,
+        };
+        if let Some(rl) = rate
+            && matches!(rl.key, crate::policy::RateKey::Principal)
+            && !e.required
+        {
+            describe(Msg::new(), app, r)
+                .push(" has a principal-keyed rate limit but is not authenticated; key it by IP or require authentication")
+                .fail();
+        }
+
         if !e.required && e.strict_ancestor && !e.public_reason_given {
             describe(Msg::new(), app, r)
                 .push(" is public under a strict `deny_anonymous` policy; declare `public(reason = \"...\")` to document the exception")
@@ -381,7 +415,6 @@ pub const fn check_app(app: &AppDescriptor) {
                 .fail();
         }
 
-        // Pairwise path checks.
         let pi = route_full_path(app, r);
         let mut j = i + 1;
         while j < app.routes.len() {

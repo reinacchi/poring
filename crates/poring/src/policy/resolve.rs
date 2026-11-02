@@ -6,7 +6,8 @@ use crate::contract::{PolicyView, RateLimitView};
 
 use crate::descriptor::Method;
 use crate::policy::{
-    DEFAULT_BODY_LIMIT, DEFAULT_TIMEOUT_MS, Level, LevelAuth, LevelCsrf, PolicySpec, RateLimitSpec, TimeoutSpec,
+    DEFAULT_BODY_LIMIT, DEFAULT_TIMEOUT_MS, Level, LevelAuth, LevelCsrf, PolicySpec, RateLimitSpec,
+    TimeoutSpec,
 };
 
 /// Effective CSRF mode of a route.
@@ -43,6 +44,12 @@ pub struct EffectivePolicy {
     pub timeout: Option<Duration>,
     /// Rate limit.
     pub rate_limit: Option<RateLimitSpec>,
+    /// The level that declared `rate_limit` (determines the shared bucket for group and
+    /// app scopes).
+    pub rate_limit_source: Option<String>,
+    /// App-wide ceiling enforced in addition to `rate_limit` (see
+    /// [`AppContext::ceiling`]).
+    pub rate_limit_ceiling: Option<RateLimitSpec>,
     /// CORS checks apply (app has CORS configured).
     pub cors: bool,
     /// Route reads the request body (enables the body gate).
@@ -55,11 +62,17 @@ impl EffectivePolicy {
     /// The ordered list of runtime checks, using graph stage names.
     pub fn checks(&self) -> Vec<String> {
         let mut c = Vec::new();
-        let by_principal = self.rate_limit.map(|r| r.key == crate::policy::RateKey::Principal).unwrap_or(false);
+        let principal = |r: Option<RateLimitSpec>| {
+            r.is_some_and(|r| r.key == crate::policy::RateKey::Principal)
+        };
+        // All applicable limits are checked together, after authentication when any of
+        // them is keyed by principal.
+        let by_principal = principal(self.rate_limit) || principal(self.rate_limit_ceiling);
+        let limited = self.rate_limit.is_some() || self.rate_limit_ceiling.is_some();
         if self.cors {
             c.push("cors".to_owned());
         }
-        if self.rate_limit.is_some() && !by_principal {
+        if limited && !by_principal {
             c.push("rate_limit".to_owned());
         }
         if self.auth_required {
@@ -69,7 +82,7 @@ impl EffectivePolicy {
             }
         }
         // Principal-keyed limits need the authenticated subject, so they run after auth.
-        if self.rate_limit.is_some() && by_principal {
+        if limited && by_principal {
             c.push("rate_limit".to_owned());
         }
         if self.auth_required && self.csrf == CsrfMode::Enforced {
@@ -84,7 +97,12 @@ impl EffectivePolicy {
     /// Serialisable view for manifests.
     pub fn view(&self) -> PolicyView {
         PolicyView {
-            auth: if self.auth_required { "required" } else { "public" }.to_owned(),
+            auth: if self.auth_required {
+                "required"
+            } else {
+                "public"
+            }
+            .to_owned(),
             public_reason: self.public_reason.clone(),
             implicit_public: self.implicit_public,
             scopes: self.scopes.clone(),
@@ -102,14 +120,35 @@ impl EffectivePolicy {
                 _ => None,
             },
             timeout_ms: self.timeout.map(|d| d.as_millis() as u64),
-            rate_limit: self.rate_limit.map(|r| RateLimitView {
-                requests: r.requests,
-                per_ms: r.per_ms,
-                key: r.key.as_str().to_owned(),
-            }),
+            rate_limit: self
+                .rate_limit
+                .map(|r| rate_limit_view(&r, self.rate_limit_source.as_deref().unwrap_or("route"))),
+            rate_limit_ceiling: self
+                .rate_limit_ceiling
+                .map(|r| rate_limit_view(&r, "app ceiling")),
             provenance: self.provenance.clone(),
             checks: self.checks(),
         }
+    }
+}
+
+fn rate_limit_view(r: &RateLimitSpec, source: &str) -> RateLimitView {
+    use crate::policy::RateScope;
+    RateLimitView {
+        requests: r.requests,
+        per_ms: r.per_ms,
+        key: r.key.as_str().to_owned(),
+        algorithm: "token_bucket".to_owned(),
+        scope: if source == "app ceiling" {
+            "app".to_owned()
+        } else {
+            r.scope.as_str().to_owned()
+        },
+        shared_by: match r.scope {
+            RateScope::Route if source != "app ceiling" => None,
+            _ => Some(source.to_owned()),
+        },
+        headers: r.headers,
     }
 }
 
@@ -122,6 +161,10 @@ pub struct AppContext {
     pub auth_uses_cookies: bool,
     /// CORS is configured.
     pub cors: bool,
+    /// App-wide rate limit enforced in addition to every route's own limit. A
+    /// principal-keyed ceiling covers authenticated routes only (public routes have no
+    /// principal); use an IP-keyed ceiling to cover every route.
+    pub ceiling: Option<RateLimitSpec>,
 }
 
 /// Merges `levels` (app first, then group/plugin, then route) into an effective policy.
@@ -254,7 +297,9 @@ pub(crate) fn resolve_levels(
         return Err("is public and would drop inherited scope/role requirements".into());
     }
     if !auth_required && (!scopes.is_empty() || !roles.is_empty()) {
-        prov.push("inherited scopes/roles dropped: route is an explicit public exception".to_owned());
+        prov.push(
+            "inherited scopes/roles dropped: route is an explicit public exception".to_owned(),
+        );
         scopes.clear();
         roles.clear();
     }
@@ -282,7 +327,9 @@ pub(crate) fn resolve_levels(
             CsrfMode::Exempt(reason.to_owned())
         }
         _ if auth_required && app.auth_uses_cookies && method.is_unsafe() => {
-            prov.push(format!("csrf=enforced <- {csrf_src} (cookie-capable authenticator, unsafe method)"));
+            prov.push(format!(
+                "csrf=enforced <- {csrf_src} (cookie-capable authenticator, unsafe method)"
+            ));
             CsrfMode::Enforced
         }
         _ => CsrfMode::NotApplicable,
@@ -301,10 +348,41 @@ pub(crate) fn resolve_levels(
             Some(Duration::from_millis(ms))
         }
     };
+    if let Some((r, src)) = rate
+        && r.key == crate::policy::RateKey::Principal
+        && !auth_required
+    {
+        return Err(format!(
+            "has a principal-keyed rate limit (from {src}) but is not authenticated; key it by IP or require authentication"
+        ));
+    }
+    let rate_limit_source = rate.map(|(_, src)| src.to_owned());
     let rate_limit = rate.map(|(r, src)| {
-        prov.push(format!("rate_limit={}/{}ms by {} <- {src}", r.requests, r.per_ms, r.key.as_str()));
+        prov.push(format!(
+            "rate_limit={}/{}ms by {} <- {src}",
+            r.requests,
+            r.per_ms,
+            r.key.as_str()
+        ));
+        if r.scope != crate::policy::RateScope::Route {
+            prov.push(format!(
+                "rate_limit bucket shared by every route inheriting it ({} scope)",
+                r.scope.as_str()
+            ));
+        }
         r
     });
+    let rate_limit_ceiling = app
+        .ceiling
+        .filter(|c| c.key == crate::policy::RateKey::Ip || auth_required);
+    if let Some(c) = rate_limit_ceiling {
+        prov.push(format!(
+            "rate_limit ceiling={}/{}ms by {} <- app (enforced in addition)",
+            c.requests,
+            c.per_ms,
+            c.key.as_str()
+        ));
+    }
 
     Ok(EffectivePolicy {
         auth_required,
@@ -317,6 +395,8 @@ pub(crate) fn resolve_levels(
         csrf: csrf_mode,
         timeout,
         rate_limit,
+        rate_limit_source,
+        rate_limit_ceiling,
         cors: app.cors,
         reads_body,
         provenance: prov,
@@ -328,13 +408,33 @@ mod tests {
     use super::*;
     use crate::policy::AuthSpec;
 
-    const APP_AUTH: AppContext = AppContext { has_authenticator: true, auth_uses_cookies: true, cors: false };
+    const APP_AUTH: AppContext = AppContext {
+        has_authenticator: true,
+        auth_uses_cookies: true,
+        cors: false,
+        ceiling: None,
+    };
 
     #[test]
     fn scopes_union_and_body_narrowing() {
-        let app = PolicySpec { body_limit: Some(1 << 20), scopes: &["a"], ..PolicySpec::INHERIT };
-        let route = PolicySpec { body_limit: Some(1024), scopes: &["b"], ..PolicySpec::INHERIT };
-        let e = resolve(APP_AUTH, &[("app", &app), ("route", &route)], Method::Post, true, false).unwrap();
+        let app = PolicySpec {
+            body_limit: Some(1 << 20),
+            scopes: &["a"],
+            ..PolicySpec::INHERIT
+        };
+        let route = PolicySpec {
+            body_limit: Some(1024),
+            scopes: &["b"],
+            ..PolicySpec::INHERIT
+        };
+        let e = resolve(
+            APP_AUTH,
+            &[("app", &app), ("route", &route)],
+            Method::Post,
+            true,
+            false,
+        )
+        .unwrap();
         assert!(e.auth_required);
         assert_eq!(e.scopes, vec!["a", "b"]);
         assert_eq!(e.body_limit, 1024);
@@ -344,28 +444,84 @@ mod tests {
 
     #[test]
     fn raising_limit_is_rejected() {
-        let app = PolicySpec { body_limit: Some(1024), ..PolicySpec::INHERIT };
-        let route = PolicySpec { body_limit: Some(4096), ..PolicySpec::INHERIT };
-        assert!(resolve(APP_AUTH, &[("app", &app), ("route", &route)], Method::Post, true, false).is_err());
+        let app = PolicySpec {
+            body_limit: Some(1024),
+            ..PolicySpec::INHERIT
+        };
+        let route = PolicySpec {
+            body_limit: Some(4096),
+            ..PolicySpec::INHERIT
+        };
+        assert!(
+            resolve(
+                APP_AUTH,
+                &[("app", &app), ("route", &route)],
+                Method::Post,
+                true,
+                false
+            )
+            .is_err()
+        );
     }
 
     #[test]
     fn strict_requires_reason() {
-        let app = PolicySpec { auth: AuthSpec::Required, strict: true, ..PolicySpec::INHERIT };
-        let bare = PolicySpec { auth: AuthSpec::Public { reason: "" }, ..PolicySpec::INHERIT };
-        let why = PolicySpec { auth: AuthSpec::Public { reason: "health probe" }, ..PolicySpec::INHERIT };
-        assert!(resolve(APP_AUTH, &[("app", &app), ("route", &bare)], Method::Get, false, false).is_err());
-        let ok = resolve(APP_AUTH, &[("app", &app), ("route", &why)], Method::Get, false, false).unwrap();
+        let app = PolicySpec {
+            auth: AuthSpec::Required,
+            strict: true,
+            ..PolicySpec::INHERIT
+        };
+        let bare = PolicySpec {
+            auth: AuthSpec::Public { reason: "" },
+            ..PolicySpec::INHERIT
+        };
+        let why = PolicySpec {
+            auth: AuthSpec::Public {
+                reason: "health probe",
+            },
+            ..PolicySpec::INHERIT
+        };
+        assert!(
+            resolve(
+                APP_AUTH,
+                &[("app", &app), ("route", &bare)],
+                Method::Get,
+                false,
+                false
+            )
+            .is_err()
+        );
+        let ok = resolve(
+            APP_AUTH,
+            &[("app", &app), ("route", &why)],
+            Method::Get,
+            false,
+            false,
+        )
+        .unwrap();
         assert!(!ok.auth_required);
         assert_eq!(ok.public_reason.as_deref(), Some("health probe"));
     }
 
     #[test]
     fn implicit_public_without_authenticator() {
-        let ctx = AppContext { has_authenticator: false, auth_uses_cookies: false, cors: false };
-        let e =
-            resolve(ctx, &[("app", &PolicySpec::INHERIT), ("route", &PolicySpec::INHERIT)], Method::Get, false, false)
-                .unwrap();
+        let ctx = AppContext {
+            has_authenticator: false,
+            auth_uses_cookies: false,
+            cors: false,
+            ceiling: None,
+        };
+        let e = resolve(
+            ctx,
+            &[
+                ("app", &PolicySpec::INHERIT),
+                ("route", &PolicySpec::INHERIT),
+            ],
+            Method::Get,
+            false,
+            false,
+        )
+        .unwrap();
         assert!(!e.auth_required);
         assert!(e.implicit_public);
         assert!(e.checks().is_empty());

@@ -1,15 +1,9 @@
-//! Runtime enforcement primitives: CORS, CSRF, rate limiting.
-
-use std::collections::HashMap;
-use std::hash::{BuildHasher, Hash, RandomState};
-use std::net::IpAddr;
-use std::sync::Mutex;
-use std::time::{Duration, Instant};
+//! Runtime enforcement primitives: CORS and CSRF. The rate limiter lives in
+//! [`super::rate_limit`] and is re-exported here.
 
 use http::{HeaderMap, HeaderValue};
 
 use crate::descriptor::CorsSpec;
-use crate::policy::RateLimitSpec;
 
 /// Name of the CSRF double-submit cookie.
 pub const CSRF_COOKIE: &str = "poring-csrf";
@@ -75,7 +69,8 @@ impl CorsRuntime {
             origins: spec.origins.iter().map(|s| (*s).to_owned()).collect(),
             wildcard: spec.origins.contains(&"*"),
             credentials: spec.credentials,
-            allow_headers: HeaderValue::from_str(&headers).unwrap_or_else(|_| HeaderValue::from_static("content-type")),
+            allow_headers: HeaderValue::from_str(&headers)
+                .unwrap_or_else(|_| HeaderValue::from_static("content-type")),
             max_age: HeaderValue::from(spec.max_age_secs),
         }
     }
@@ -91,7 +86,8 @@ impl CorsRuntime {
             origins: c.origins.clone(),
             wildcard: c.origins.iter().any(|o| o == "*"),
             credentials: c.credentials,
-            allow_headers: HeaderValue::from_str(&headers).unwrap_or_else(|_| HeaderValue::from_static("content-type")),
+            allow_headers: HeaderValue::from_str(&headers)
+                .unwrap_or_else(|_| HeaderValue::from_static("content-type")),
             max_age: HeaderValue::from(c.max_age_secs),
         }
     }
@@ -111,12 +107,20 @@ impl CorsRuntime {
             headers.append(VARY, HeaderValue::from_static("origin"));
         }
         if self.credentials {
-            headers.insert(ACCESS_CONTROL_ALLOW_CREDENTIALS, HeaderValue::from_static("true"));
+            headers.insert(
+                ACCESS_CONTROL_ALLOW_CREDENTIALS,
+                HeaderValue::from_static("true"),
+            );
         }
     }
 
     /// Adds preflight headers.
-    pub fn apply_preflight(&self, origin: &HeaderValue, allow: &HeaderValue, headers: &mut HeaderMap) {
+    pub fn apply_preflight(
+        &self,
+        origin: &HeaderValue,
+        allow: &HeaderValue,
+        headers: &mut HeaderMap,
+    ) {
         use http::header::*;
         self.apply(origin, headers);
         headers.insert(ACCESS_CONTROL_ALLOW_METHODS, allow.clone());
@@ -125,125 +129,29 @@ impl CorsRuntime {
     }
 }
 
-/// Rate-limit partition key value.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum RateKeyValue {
-    /// Client IP.
-    Ip(IpAddr),
-    /// Principal subject.
-    Subject(String),
-    /// Unknown client (no peer address, e.g. in-process tests).
-    Unknown,
-}
-
-#[derive(Clone, Copy, Debug)]
-struct Bucket {
-    tokens: f64,
-    last: Instant,
-}
-
-const SHARDS: usize = 16;
-
-/// A bounded, sharded token-bucket rate limiter.
-///
-/// Memory is bounded by `max_keys` (split across shards). When a shard is full, expired
-/// (fully refilled) buckets are evicted first; if none are expired, the oldest bucket is
-/// evicted. This keeps memory bounded under key-flooding at the cost of letting a
-/// flooded-out key start over with a full bucket (documented in SECURITY_MODEL.md).
-#[derive(Debug)]
-pub struct RateLimiter {
-    shards: Vec<Mutex<HashMap<(u32, RateKeyValue), Bucket>>>,
-    per_shard: usize,
-    hasher: RandomState,
-}
-
-impl RateLimiter {
-    /// Creates a limiter bounded to roughly `max_keys` buckets.
-    pub fn new(max_keys: usize) -> Self {
-        RateLimiter {
-            shards: (0..SHARDS).map(|_| Mutex::new(HashMap::new())).collect(),
-            per_shard: (max_keys / SHARDS).max(16),
-            hasher: RandomState::new(),
-        }
-    }
-
-    /// Takes one token for `(route, key)`. Returns `Err(retry_after)` when exhausted.
-    pub fn check(&self, route: u32, key: RateKeyValue, spec: &RateLimitSpec, now: Instant) -> Result<(), Duration> {
-        let capacity = f64::from(spec.requests.max(1));
-        let per = Duration::from_millis(spec.per_ms.max(1));
-        let rate = capacity / per.as_secs_f64();
-        let k = (route, key);
-
-        let shard = &self.shards[(self.hasher.hash_one(&k) as usize) % SHARDS];
-        // A poisoned lock means a panic while holding it; the map is still structurally
-        // valid, so continue rather than failing every request.
-        let mut map = shard.lock().unwrap_or_else(|p| p.into_inner());
-        if !map.contains_key(&k) && map.len() >= self.per_shard {
-            Self::evict(&mut map, now, per);
-        }
-        let b = map.entry(k).or_insert(Bucket { tokens: capacity, last: now });
-        let elapsed = now.saturating_duration_since(b.last).as_secs_f64();
-        b.tokens = (b.tokens + elapsed * rate).min(capacity);
-        b.last = now;
-        if b.tokens >= 1.0 {
-            b.tokens -= 1.0;
-            Ok(())
-        } else {
-            let wait = (1.0 - b.tokens) / rate;
-            Err(Duration::from_secs_f64(wait.max(0.001)))
-        }
-    }
-
-    fn evict(map: &mut HashMap<(u32, RateKeyValue), Bucket>, now: Instant, per: Duration) {
-        let before = map.len();
-        map.retain(|_, b| now.saturating_duration_since(b.last) < per);
-        if map.len() == before
-            && let Some(oldest) = map.iter().min_by_key(|(_, b)| b.last).map(|(k, _)| k.clone())
-        {
-            map.remove(&oldest);
-        }
-    }
-
-    /// Number of live buckets (for tests/metrics).
-    pub fn len(&self) -> usize {
-        self.shards.iter().map(|s| s.lock().map(|m| m.len()).unwrap_or(0)).sum()
-    }
-
-    /// Whether there are no buckets.
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-}
+pub use super::rate_limit::{RateKeyValue, RateLimiter};
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::policy::RateKey;
-
-    #[test]
-    fn bucket_refills_and_bounds() {
-        let rl = RateLimiter::new(32);
-        let spec = RateLimitSpec { requests: 2, per_ms: 1000, key: RateKey::Ip };
-        let t0 = Instant::now();
-        let ip = RateKeyValue::Ip("127.0.0.1".parse().unwrap());
-        assert!(rl.check(0, ip.clone(), &spec, t0).is_ok());
-        assert!(rl.check(0, ip.clone(), &spec, t0).is_ok());
-        assert!(rl.check(0, ip.clone(), &spec, t0).is_err());
-        assert!(rl.check(0, ip, &spec, t0 + Duration::from_millis(600)).is_ok());
-        for i in 0..10_000u32 {
-            let _ = rl.check(0, RateKeyValue::Subject(i.to_string()), &spec, t0);
-        }
-        assert!(rl.len() <= 16 * 16 + 16, "limiter must stay bounded, got {}", rl.len());
-    }
 
     #[test]
     fn csrf_double_submit() {
         let mut h = HeaderMap::new();
-        h.insert("cookie", HeaderValue::from_static("poring-csrf=0123456789abcdef0123"));
+        h.insert(
+            "cookie",
+            HeaderValue::from_static("poring-csrf=0123456789abcdef0123"),
+        );
         assert!(!csrf_ok(&h));
-        h.insert(CSRF_HEADER, HeaderValue::from_static("0123456789abcdef0123"));
+        h.insert(
+            CSRF_HEADER,
+            HeaderValue::from_static("0123456789abcdef0123"),
+        );
         assert!(csrf_ok(&h));
-        h.insert(CSRF_HEADER, HeaderValue::from_static("0123456789abcdef0124"));
+        h.insert(
+            CSRF_HEADER,
+            HeaderValue::from_static("0123456789abcdef0124"),
+        );
         assert!(!csrf_ok(&h));
     }
 }

@@ -11,7 +11,7 @@
     ],
     [
       "poring_version",
-      "0.1.0"
+      "0.1.1"
     ]
   ],
   "nodes": [
@@ -80,6 +80,12 @@
       "route": "post_notes",
       "kind": "branch",
       "label": "deny 429"
+    },
+    {
+      "id": "post_notes.deny.503",
+      "route": "post_notes",
+      "kind": "branch",
+      "label": "deny 503"
     },
     {
       "id": "post_notes.csrf",
@@ -152,12 +158,6 @@
       "route": "post_notes",
       "kind": "handler",
       "label": "handler create_note"
-    },
-    {
-      "id": "post_notes.deny.503",
-      "route": "post_notes",
-      "kind": "branch",
-      "label": "deny 503"
     },
     {
       "id": "post_notes.error",
@@ -235,6 +235,18 @@
     },
     {
       "from": "post_notes.deny.429",
+      "to": "send",
+      "kind": "next",
+      "label": null
+    },
+    {
+      "from": "post_notes.rate_limit",
+      "to": "post_notes.deny.503",
+      "kind": "deny",
+      "label": "503 rate limiter full"
+    },
+    {
+      "from": "post_notes.deny.503",
       "to": "send",
       "kind": "next",
       "label": null
@@ -364,12 +376,6 @@
       "to": "post_notes.deny.503",
       "kind": "deny",
       "label": "503 timeout"
-    },
-    {
-      "from": "post_notes.deny.503",
-      "to": "send",
-      "kind": "next",
-      "label": null
     },
     {
       "from": "post_notes.handler",

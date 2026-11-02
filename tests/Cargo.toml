@@ -7,8 +7,14 @@ rust-version.workspace = true
 license.workspace = true
 publish = false
 
+[features]
+default = ["wasm-guests"]
+## Wasm guest, sandbox and hot-reload tests (Wasmtime and the guest kit). Enabled by
+## default for local runs; core CI runs with `--no-default-features`.
+wasm-guests = ["poring/wasm", "poring/hot-reload", "poring/guest-kit"]
+
 [dependencies]
-poring = { workspace = true, features = ["websocket", "multipart", "wasm", "hot-reload", "guest-kit"] }
+poring = { workspace = true, features = ["websocket", "multipart"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
@@ -28,3 +34,15 @@ futures-util = { version = "0.3", default-features = false, features = ["sink", 
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 tempfile = "3"
+
+[[test]]
+name = "wasm_guest"
+required-features = ["wasm-guests"]
+
+[[test]]
+name = "wasm_hot_reload"
+required-features = ["wasm-guests"]
+
+[[test]]
+name = "wasm_sandbox"
+required-features = ["wasm-guests"]

@@ -88,42 +88,72 @@ async fn health() -> &'static str {
 
 /// List products.
 #[poring::get("/products")]
-async fn list_products(State(c): State<Catalogue>, Query(q): Query<ListQuery>) -> Json<ProductPage> {
+async fn list_products(
+    State(c): State<Catalogue>,
+    Query(q): Query<ListQuery>,
+) -> Json<ProductPage> {
     let map = c.0.lock().unwrap_or_else(|p| p.into_inner());
-    let matching: Vec<Product> = map.values().filter(|p| q.category.is_none_or(|c| c == p.category)).cloned().collect();
+    let matching: Vec<Product> = map
+        .values()
+        .filter(|p| q.category.is_none_or(|c| c == p.category))
+        .cloned()
+        .collect();
     let total = matching.len() as u64;
-    let items = matching.into_iter().take(q.limit.unwrap_or(20) as usize).collect();
+    let items = matching
+        .into_iter()
+        .take(q.limit.unwrap_or(20) as usize)
+        .collect();
     Json(ProductPage { items, total })
 }
 
 /// Get one product.
 #[poring::get("/products/{id}")]
-async fn get_product(Path(id): Path<u64>, State(c): State<Catalogue>) -> Result<Json<Product>, ApiError> {
+async fn get_product(
+    Path(id): Path<u64>,
+    State(c): State<Catalogue>,
+) -> Result<Json<Product>, ApiError> {
     let map = c.0.lock().unwrap_or_else(|p| p.into_inner());
-    map.get(&id).cloned().map(Json).ok_or_else(|| ApiError::not_found(format!("product {id} not found")))
+    map.get(&id)
+        .cloned()
+        .map(Json)
+        .ok_or_else(|| ApiError::not_found(format!("product {id} not found")))
 }
 
 /// Create a product.
 #[poring::post("/products", policy(body_limit = "8KiB"))]
-async fn create_product(State(c): State<Catalogue>, Json(n): Json<NewProduct>) -> (StatusCode, Json<Product>) {
+async fn create_product(
+    State(c): State<Catalogue>,
+    Json(n): Json<NewProduct>,
+) -> (StatusCode, Json<Product>) {
     let mut map = c.0.lock().unwrap_or_else(|p| p.into_inner());
     let id = map.keys().next_back().copied().unwrap_or(0) + 1;
-    let p = Product { id, name: n.name, price_cents: n.price_cents, category: n.category };
+    let p = Product {
+        id,
+        name: n.name,
+        price_cents: n.price_cents,
+        category: n.category,
+    };
     map.insert(id, p.clone());
     (StatusCode::CREATED, Json(p))
 }
 
 /// Delete a product.
 #[poring::delete("/products/{id}")]
-async fn delete_product(Path(id): Path<u64>, State(c): State<Catalogue>) -> Result<StatusCode, ApiError> {
+async fn delete_product(
+    Path(id): Path<u64>,
+    State(c): State<Catalogue>,
+) -> Result<StatusCode, ApiError> {
     let mut map = c.0.lock().unwrap_or_else(|p| p.into_inner());
-    map.remove(&id).map(|_| StatusCode::NO_CONTENT).ok_or_else(|| ApiError::not_found("no such product"))
+    map.remove(&id)
+        .map(|_| StatusCode::NO_CONTENT)
+        .ok_or_else(|| ApiError::not_found("no such product"))
 }
 
 /// Adds `x-api-version` to every v1 response.
 #[poring::hook]
 async fn version_header(_cx: &Ctx<'_, ShopState>, res: &mut Response) {
-    res.headers_mut().insert("x-api-version", HeaderValue::from_static("1"));
+    res.headers_mut()
+        .insert("x-api-version", HeaderValue::from_static("1"));
 }
 
 /// Metrics plugin (generic over any state that provides `Metrics`).

@@ -64,7 +64,10 @@ async fn search(Query(q): Query<Paging>) -> Json<serde_json::Value> {
 }
 
 #[poring::post("/items", policy(body_limit = "128B"))]
-async fn create(State(c): State<Counter>, Json(item): Json<NewItem>) -> (StatusCode, Json<NewItem>) {
+async fn create(
+    State(c): State<Counter>,
+    Json(item): Json<NewItem>,
+) -> (StatusCode, Json<NewItem>) {
     c.0.fetch_add(1, Ordering::SeqCst);
     (StatusCode::CREATED, Json(item))
 }
@@ -104,7 +107,8 @@ struct Marker(&'static str);
 
 #[poring::hook]
 async fn stamp(_cx: &Ctx<'_, AppState>, res: &mut Response) {
-    res.headers_mut().insert("x-stamped", HeaderValue::from_static("yes"));
+    res.headers_mut()
+        .insert("x-stamped", HeaderValue::from_static("yes"));
 }
 
 #[poring::get("/guarded", before = [require_header], after = [stamp])]
@@ -127,7 +131,10 @@ poring_app! {
 fn app() -> (poring::App<Core>, Counter) {
     let counter = Counter::default();
     let app = Core::builder()
-        .state(AppState { counter: counter.clone(), greeting: Greeting("hi from state") })
+        .state(AppState {
+            counter: counter.clone(),
+            greeting: Greeting("hi from state"),
+        })
         .build()
         .expect("app builds");
     (app, counter)
@@ -139,10 +146,21 @@ async fn static_routes_and_params() {
     let c = app.client();
     assert_eq!(c.get("/").send().await.text(), "root");
     assert_eq!(c.get("/users/42").send().await.text(), "user 42");
-    assert_eq!(c.get("/users/new").send().await.text(), "static wins", "static segment beats parameter");
-    assert_eq!(c.get("/files/a/b%20c.txt").send().await.text(), "file a/b c.txt");
+    assert_eq!(
+        c.get("/users/new").send().await.text(),
+        "static wins",
+        "static segment beats parameter"
+    );
+    assert_eq!(
+        c.get("/files/a/b%20c.txt").send().await.text(),
+        "file a/b c.txt"
+    );
     assert_eq!(c.get("/pair/7/x%2Fy").send().await.text(), "7:x/y");
-    assert_eq!(c.patch("/patch/9").send().await.text(), "patched 9", "`:id` sugar is canonicalised");
+    assert_eq!(
+        c.patch("/patch/9").send().await.text(),
+        "patched 9",
+        "`:id` sugar is canonicalised"
+    );
     assert_eq!(c.get("/sync").send().await.text(), "sync ok");
 }
 
@@ -158,7 +176,11 @@ async fn unknown_paths_methods_head_and_options_follow_http_semantics() {
     let r = c.head("/users/1").send().await;
     assert_eq!(r.status, 200);
     assert!(r.body.is_empty(), "HEAD has no body");
-    assert_eq!(r.header("content-length"), Some("6"), "HEAD keeps GET's Content-Length");
+    assert_eq!(
+        r.header("content-length"),
+        Some("6"),
+        "HEAD keeps GET's Content-Length"
+    );
     let r = c.options("/items").send().await;
     assert_eq!(r.status, 204);
     assert_eq!(r.header("allow"), Some("POST, OPTIONS"));
@@ -170,8 +192,16 @@ async fn unknown_paths_methods_head_and_options_follow_http_semantics() {
     let r = c.get("/").header("x-request-id", "abc-123").send().await;
     assert_eq!(r.header("x-content-type-options"), Some("nosniff"));
     assert_eq!(r.header("x-request-id"), Some("abc-123"));
-    let r = c.get("/").header("x-request-id", "bad id\twith stuff").send().await;
-    assert_ne!(r.header("x-request-id"), Some("bad id\twith stuff"), "unsafe ids are replaced");
+    let r = c
+        .get("/")
+        .header("x-request-id", "bad id\twith stuff")
+        .send()
+        .await;
+    assert_ne!(
+        r.header("x-request-id"),
+        Some("bad id\twith stuff"),
+        "unsafe ids are replaced"
+    );
 }
 
 #[tokio::test]
@@ -183,24 +213,63 @@ async fn malformed_input_is_rejected() {
     assert!(r.text().contains("must be u64"), "{}", r.text());
     assert_eq!(c.get("/users/%ZZ").send().await.status, 400);
     assert_eq!(c.get("/pair/300/x").send().await.status, 400, "u8 overflow");
-    let r = c.post("/items").header("content-type", "application/json").body("{not json").send().await;
+    let r = c
+        .post("/items")
+        .header("content-type", "application/json")
+        .body("{not json")
+        .send()
+        .await;
     assert_eq!(r.status, 400);
-    let r = c.post("/items").header("content-type", "text/plain").body("{}").send().await;
+    let r = c
+        .post("/items")
+        .header("content-type", "text/plain")
+        .body("{}")
+        .send()
+        .await;
     assert_eq!(r.status, 415);
-    let r = c.post("/items").json(&serde_json::json!({"name": "x"})).send().await;
-    assert_eq!(r.status, 400, "missing field is a shape error: {}", r.text());
+    let r = c
+        .post("/items")
+        .json(&serde_json::json!({"name": "x"}))
+        .send()
+        .await;
+    assert_eq!(
+        r.status,
+        400,
+        "missing field is a shape error: {}",
+        r.text()
+    );
 }
 
 #[tokio::test]
 async fn json_validation_and_limits() {
     let (app, counter) = app();
     let c = app.client();
-    let ok = c.post("/items").json(&NewItem { name: "pen".into(), qty: 3 }).send().await;
+    let ok = c
+        .post("/items")
+        .json(&NewItem {
+            name: "pen".into(),
+            qty: 3,
+        })
+        .send()
+        .await;
     assert_eq!(ok.status, 201);
-    assert_eq!(ok.json::<NewItem>(), NewItem { name: "pen".into(), qty: 3 });
+    assert_eq!(
+        ok.json::<NewItem>(),
+        NewItem {
+            name: "pen".into(),
+            qty: 3
+        }
+    );
     assert_eq!(counter.0.load(Ordering::SeqCst), 1);
 
-    let bad = c.post("/items").json(&NewItem { name: "".into(), qty: 1000 }).send().await;
+    let bad = c
+        .post("/items")
+        .json(&NewItem {
+            name: "".into(),
+            qty: 1000,
+        })
+        .send()
+        .await;
     assert_eq!(bad.status, 422);
     let v: serde_json::Value = bad.json();
     let issues = v["error"]["issues"].as_array().unwrap();
@@ -208,10 +277,19 @@ async fn json_validation_and_limits() {
     assert_eq!(issues[0]["path"], "/name");
     assert_eq!(issues[0]["rule"], "min_length");
     assert_eq!(issues[1]["path"], "/qty");
-    assert_eq!(counter.0.load(Ordering::SeqCst), 1, "handler not called on invalid input");
+    assert_eq!(
+        counter.0.load(Ordering::SeqCst),
+        1,
+        "handler not called on invalid input"
+    );
 
     let big = format!("{{\"name\":\"{}\",\"qty\":1}}", "x".repeat(200));
-    let r = c.post("/items").header("content-type", "application/json").body(big).send().await;
+    let r = c
+        .post("/items")
+        .header("content-type", "application/json")
+        .body(big)
+        .send()
+        .await;
     assert_eq!(r.status, 413);
 }
 
@@ -220,11 +298,21 @@ async fn query_repeated_keys_and_state() {
     let (app, _) = app();
     let c = app.client();
     let r = c.get("/search?page=2&tag=a&tag=b").send().await;
-    assert_eq!(r.json::<serde_json::Value>(), serde_json::json!({"page": 2, "tags": ["a", "b"]}));
+    assert_eq!(
+        r.json::<serde_json::Value>(),
+        serde_json::json!({"page": 2, "tags": ["a", "b"]})
+    );
     let r = c.get("/search?page=x").send().await;
     assert_eq!(r.status, 400);
-    let many = (0..300).map(|i| format!("k{i}=v")).collect::<Vec<_>>().join("&");
-    assert_eq!(c.get(&format!("/search?{many}")).send().await.status, 400, "field-count ceiling");
+    let many = (0..300)
+        .map(|i| format!("k{i}=v"))
+        .collect::<Vec<_>>()
+        .join("&");
+    assert_eq!(
+        c.get(&format!("/search?{many}")).send().await.status,
+        400,
+        "field-count ceiling"
+    );
     assert_eq!(c.get("/greet").send().await.text(), "hi from state");
 }
 
@@ -238,26 +326,45 @@ async fn errors_hooks_and_raw_body() {
 
     let r = c.get("/guarded").send().await;
     assert_eq!(r.status, 403);
-    assert_eq!(r.header("x-stamped"), Some("yes"), "after hooks run on short-circuit responses");
+    assert_eq!(
+        r.header("x-stamped"),
+        Some("yes"),
+        "after hooks run on short-circuit responses"
+    );
     let r = c.get("/guarded").header("x-allow", "1").send().await;
     assert_eq!(r.text(), "from-hook");
     assert_eq!(r.header("x-stamped"), Some("yes"));
 
-    assert_eq!(c.put("/echo").body("raw body").send().await.text(), "raw body");
+    assert_eq!(
+        c.put("/echo").body("raw body").send().await.text(),
+        "raw body"
+    );
 }
 
 #[tokio::test]
 async fn error_mapper_rewrites_framework_errors_only() {
     let app = Core::builder()
-        .state(AppState { counter: Counter::default(), greeting: Greeting("x") })
+        .state(AppState {
+            counter: Counter::default(),
+            greeting: Greeting("x"),
+        })
         .map_errors(|e, _| (e.status, format!("mapped {}", e.code)).into_response())
         .build()
         .unwrap();
     let c = app.client();
     assert_eq!(c.get("/nope").send().await.text(), "mapped not_found");
-    assert_eq!(c.get("/users/x").send().await.text(), "mapped invalid_path_param");
+    assert_eq!(
+        c.get("/users/x").send().await.text(),
+        "mapped invalid_path_param"
+    );
     // Application errors are untouched.
-    assert!(c.get("/fail").send().await.text().contains("already exists"));
+    assert!(
+        c.get("/fail")
+            .send()
+            .await
+            .text()
+            .contains("already exists")
+    );
 }
 
 #[tokio::test]
@@ -266,7 +373,11 @@ async fn real_socket_semantics_and_graceful_shutdown() {
     let server = app.bind("127.0.0.1:0").await.unwrap();
     let addr = server.local_addr();
 
-    let r = raw_http(addr, b"GET /users/5 HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n").await;
+    let r = raw_http(
+        addr,
+        b"GET /users/5 HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+    )
+    .await;
     assert_eq!(status_of(&r), 200);
     assert!(r.ends_with("user 5"), "{r}");
 
@@ -287,13 +398,20 @@ async fn real_socket_semantics_and_graceful_shutdown() {
     assert_eq!(status_of(&raw_http(addr, req.as_bytes()).await), 413);
 
     // HEAD over the wire.
-    let r = raw_http(addr, b"HEAD /users/5 HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n").await;
+    let r = raw_http(
+        addr,
+        b"HEAD /users/5 HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+    )
+    .await;
     assert_eq!(status_of(&r), 200);
     assert!(r.to_ascii_lowercase().contains("content-length: 6"));
     assert!(!r.contains("user 5"));
 
     server.shutdown().await.unwrap();
-    assert!(tokio::net::TcpStream::connect(addr).await.is_err(), "listener closed after shutdown");
+    assert!(
+        tokio::net::TcpStream::connect(addr).await.is_err(),
+        "listener closed after shutdown"
+    );
 }
 
 #[tokio::test]
@@ -304,12 +422,20 @@ async fn graceful_shutdown_waits_for_in_flight_requests() {
         "done"
     }
     poring_app! { Slow { routes: [slow] } }
-    let server = Slow::builder().build().unwrap().bind("127.0.0.1:0").await.unwrap();
+    let server = Slow::builder()
+        .build()
+        .unwrap()
+        .bind("127.0.0.1:0")
+        .await
+        .unwrap();
     let addr = server.local_addr();
-    let inflight =
-        tokio::spawn(
-            async move { raw_http(addr, b"GET /slow HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n").await },
-        );
+    let inflight = tokio::spawn(async move {
+        raw_http(
+            addr,
+            b"GET /slow HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+        )
+        .await
+    });
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     server.shutdown().await.unwrap();
     let r = inflight.await.unwrap();

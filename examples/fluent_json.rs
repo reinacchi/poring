@@ -12,7 +12,9 @@ struct Message {
 async fn main() -> Result<(), poring::StartupError> {
     Poring::new()
         .get("/ping", || async { "pong" })
-        .post("/echo", |Json(message): Json<Message>| async move { Json(message) })
+        .post("/echo", |Json(message): Json<Message>| async move {
+            Json(message)
+        })
         .listen("127.0.0.1:3000")
         .await
 }

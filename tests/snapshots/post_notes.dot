@@ -12,6 +12,7 @@ digraph "SecureApp" {
   "post_notes.authz" [label="authorise scopes=['notes:write']", shape=parallelogram, style=filled, fillcolor="#e8f0fe"];
   "post_notes.rate_limit" [label="rate limit 2/1000ms by principal", shape=parallelogram, style=filled, fillcolor="#e8f0fe"];
   "post_notes.deny.429" [label="deny 429", shape=octagon, style=filled, fillcolor="#fde2e2"];
+  "post_notes.deny.503" [label="deny 503", shape=octagon, style=filled, fillcolor="#fde2e2"];
   "post_notes.csrf" [label="CSRF check (cookie auth, unsafe method)", shape=parallelogram, style=filled, fillcolor="#e8f0fe"];
   "post_notes.body_gate" [label="body gate <= 1024 bytes, types=['application/json']", shape=parallelogram, style=filled, fillcolor="#e8f0fe"];
   "post_notes.deny.413" [label="deny 413", shape=octagon, style=filled, fillcolor="#fde2e2"];
@@ -24,7 +25,6 @@ digraph "SecureApp" {
   "post_notes.extract.2" [label="extract Json<NewNote> (json)", shape=box];
   "post_notes.validate.2" [label="validate Json<NewNote>", shape=box];
   "post_notes.handler" [label="handler create_note", shape=box3d];
-  "post_notes.deny.503" [label="deny 503", shape=octagon, style=filled, fillcolor="#fde2e2"];
   "post_notes.error" [label="handler error -> IntoResponse", shape=octagon, style=filled, fillcolor="#fde2e2"];
   "receive" -> "match" [style=solid];
   "match" -> "post_notes.cors" [style=solid, label="POST /notes"];
@@ -38,6 +38,8 @@ digraph "SecureApp" {
   "post_notes.authz" -> "post_notes.rate_limit" [style=solid];
   "post_notes.rate_limit" -> "post_notes.deny.429" [style=dashed, label="429 too many requests"];
   "post_notes.deny.429" -> "send" [style=solid];
+  "post_notes.rate_limit" -> "post_notes.deny.503" [style=dashed, label="503 rate limiter full"];
+  "post_notes.deny.503" -> "send" [style=solid];
   "post_notes.rate_limit" -> "post_notes.csrf" [style=solid];
   "post_notes.csrf" -> "post_notes.deny.403" [style=dashed, label="403 csrf"];
   "post_notes.csrf" -> "post_notes.body_gate" [style=solid];
@@ -59,7 +61,6 @@ digraph "SecureApp" {
   "post_notes.validate.2" -> "post_notes.reject" [style=dashed, label="422 invalid"];
   "post_notes.validate.2" -> "post_notes.handler" [style=solid];
   "post_notes.handler" -> "post_notes.deny.503" [style=dashed, label="503 timeout"];
-  "post_notes.deny.503" -> "send" [style=solid];
   "post_notes.handler" -> "post_notes.error" [style=dashed, label="Err"];
   "post_notes.error" -> "post_notes.respond" [style=solid];
   "post_notes.handler" -> "post_notes.respond" [style=solid];

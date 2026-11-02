@@ -25,16 +25,16 @@ impl<T> ExtractorMeta for Header<T> {
 impl<S: Sync, T: Named + FromStr + Send> FromRequest<S> for Header<T> {
     type Rejection = ApiError;
     async fn from_request(cx: &mut Ctx<'_, S>) -> Result<Self, ApiError> {
-        let v = cx
-            .parts
-            .headers
-            .get(T::NAME)
-            .ok_or_else(|| rejection::bad_request("missing_header", format!("missing header `{}`", T::NAME)))?;
+        let v = cx.parts.headers.get(T::NAME).ok_or_else(|| {
+            rejection::bad_request("missing_header", format!("missing header `{}`", T::NAME))
+        })?;
         v.to_str()
             .ok()
             .and_then(|s| s.parse().ok())
             .map(Header)
-            .ok_or_else(|| rejection::bad_request("invalid_header", format!("invalid header `{}`", T::NAME)))
+            .ok_or_else(|| {
+                rejection::bad_request("invalid_header", format!("invalid header `{}`", T::NAME))
+            })
     }
 }
 

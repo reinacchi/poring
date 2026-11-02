@@ -83,14 +83,17 @@ async fn log_request(cx: &mut Ctx<'_, AppState>) {
 /// Adds the API version to v1 responses.
 #[poring::hook]
 async fn v1_header(_cx: &Ctx<'_, AppState>, res: &mut Response) {
-    res.headers_mut().insert("x-api-version", HeaderValue::from_static("1"));
+    res.headers_mut()
+        .insert("x-api-version", HeaderValue::from_static("1"));
 }
 
 /// Greets someone.
 #[poring::post("/greet", policy(body_limit = "1KiB"))]
 async fn greet(State(cfg): State<Config>, Json(req): Json<GreetReq>) -> Json<Greeting> {
     let one = format!("{}, {}!", cfg.greeting, req.name);
-    Json(Greeting { message: vec![one; usize::from(req.times.unwrap_or(1))].join(" ") })
+    Json(Greeting {
+        message: vec![one; usize::from(req.times.unwrap_or(1))].join(" "),
+    })
 }
 
 /// Health check.
@@ -117,18 +120,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let info = poring::openapi::Info::new("Composed example", "1.0.0");
     match std::env::args().nth(1).as_deref() {
         Some("--openapi") => {
-            println!("{}", serde_json::to_string_pretty(&poring::openapi::openapi::<Composed>(&info)?)?);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&poring::openapi::openapi::<Composed>(&info)?)?
+            );
             return Ok(());
         }
         Some("--ts") => {
-            print!("{}", poring::openapi::typescript_client(&poring::openapi::openapi::<Composed>(&info)?));
+            print!(
+                "{}",
+                poring::openapi::typescript_client(&poring::openapi::openapi::<Composed>(&info)?)
+            );
             return Ok(());
         }
         _ => {}
     }
     let addr = std::env::var("PORING_ADDR").unwrap_or_else(|_| "127.0.0.1:3000".into());
     Composed::builder()
-        .state(AppState { config: Config { greeting: "Hello" }, hits: hits::Hits::default() })
+        .state(AppState {
+            config: Config { greeting: "Hello" },
+            hits: hits::Hits::default(),
+        })
         .listen(addr)
         .await?;
     Ok(())

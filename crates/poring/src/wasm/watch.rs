@@ -76,21 +76,33 @@ pub fn read_artefact(p: &Path) -> Result<Vec<u8>, LoadError> {
     let bytes = std::fs::read(p).map_err(|e| LoadError::Io(e.to_string()))?;
     #[cfg(feature = "guest-kit")]
     if p.extension().and_then(|e| e.to_str()) == Some("wat") {
-        return crate::wasm::guest_kit::componentise(&bytes).map_err(|e| LoadError::Compile(e.to_string()));
+        return crate::wasm::guest_kit::componentise(&bytes)
+            .map_err(|e| LoadError::Compile(e.to_string()));
     }
     Ok(bytes)
 }
 
 /// Watches `path` and hot-reloads `slot` on stable changes.
-pub fn watch(slot: Arc<GuestSlot>, path: impl Into<PathBuf>, cfg: WatchConfig) -> Result<WatchHandle, LoadError> {
+pub fn watch(
+    slot: Arc<GuestSlot>,
+    path: impl Into<PathBuf>,
+    cfg: WatchConfig,
+) -> Result<WatchHandle, LoadError> {
     let path: PathBuf = path.into();
-    let dir = path.parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from("."));
+    let dir = path
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."));
     let stop = Arc::new(AtomicBool::new(false));
     let (tx, rx) = std::sync::mpsc::channel::<()>();
     let file_name = path.file_name().map(|f| f.to_os_string());
     let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
         if let Ok(ev) = res
-            && ev.paths.iter().any(|p| p.file_name().map(|f| Some(f.to_os_string()) == file_name).unwrap_or(false))
+            && ev.paths.iter().any(|p| {
+                p.file_name()
+                    .map(|f| Some(f.to_os_string()) == file_name)
+                    .unwrap_or(false)
+            })
         {
             let _ = tx.send(());
         }
@@ -137,5 +149,8 @@ pub fn watch(slot: Arc<GuestSlot>, path: impl Into<PathBuf>, cfg: WatchConfig) -
             }
         })
         .map_err(|e| LoadError::Io(e.to_string()))?;
-    Ok(WatchHandle { stop, thread: Some(thread) })
+    Ok(WatchHandle {
+        stop,
+        thread: Some(thread),
+    })
 }

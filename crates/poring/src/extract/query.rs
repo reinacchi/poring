@@ -32,11 +32,21 @@ pub(crate) fn parse_urlencoded<T: DeserializeOwned>(
     what: &'static str,
 ) -> Result<T, ApiError> {
     if raw.len() > max_bytes {
-        return Err(rejection::bad_request("too_large", format!("{what} exceeds {max_bytes} bytes")));
+        return Err(rejection::bad_request(
+            "too_large",
+            format!("{what} exceeds {max_bytes} bytes"),
+        ));
     }
-    let fields = if raw.is_empty() { 0 } else { raw.iter().filter(|b| **b == b'&').count() + 1 };
+    let fields = if raw.is_empty() {
+        0
+    } else {
+        raw.iter().filter(|b| **b == b'&').count() + 1
+    };
     if fields > max_fields {
-        return Err(rejection::bad_request("too_many_fields", format!("{what} has more than {max_fields} fields")));
+        return Err(rejection::bad_request(
+            "too_many_fields",
+            format!("{what} has more than {max_fields} fields"),
+        ));
     }
     serde_html_form::from_bytes::<T>(raw)
         .map_err(|e| rejection::bad_request("invalid_urlencoded", format!("invalid {what}: {e}")))
@@ -48,7 +58,12 @@ impl<S: Sync, T: DeserializeOwned + PoringSchema + Send> FromRequest<S> for Quer
     async fn from_request(cx: &mut Ctx<'_, S>) -> Result<Self, ApiError> {
         let raw = cx.parts.uri.query().unwrap_or("");
         let limits = cx.limits();
-        let v: T = parse_urlencoded(raw.as_bytes(), limits.max_query_bytes, limits.max_form_fields, "query string")?;
+        let v: T = parse_urlencoded(
+            raw.as_bytes(),
+            limits.max_query_bytes,
+            limits.max_form_fields,
+            "query string",
+        )?;
         if T::HAS_RULES {
             cx.__mark_validate();
             let issues = crate::schema::validate(&v);

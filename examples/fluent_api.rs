@@ -39,10 +39,13 @@ struct Tokens;
 impl Authenticator for Tokens {
     async fn authenticate(&self, req: &AuthRequest<'_>) -> Result<Option<Identity>, AuthError> {
         Ok(match req.bearer_token() {
-            Some("reader") => Some(Identity::new("reader", Credential::Bearer).with_scopes(["notes:read"])),
-            Some("writer") => {
-                Some(Identity::new("writer", Credential::Bearer).with_scopes(["notes:read", "notes:write"]))
+            Some("reader") => {
+                Some(Identity::new("reader", Credential::Bearer).with_scopes(["notes:read"]))
             }
+            Some("writer") => Some(
+                Identity::new("writer", Credential::Bearer)
+                    .with_scopes(["notes:read", "notes:write"]),
+            ),
             Some(_) => return Err(AuthError::Invalid),
             None => None,
         })
@@ -59,7 +62,11 @@ async fn create(
     Json(new): Json<NewNote>,
 ) -> (StatusCode, Json<Note>) {
     let mut all = notes.0.lock().unwrap_or_else(|p| p.into_inner());
-    let note = Note { id: all.len() + 1, text: new.text, author: who.subject.clone() };
+    let note = Note {
+        id: all.len() + 1,
+        text: new.text,
+        author: who.subject.clone(),
+    };
     all.push(note.clone());
     (StatusCode::CREATED, Json(note))
 }
@@ -70,23 +77,26 @@ fn app() -> Result<poring::FluentApp<Notes, Tokens>, poring::StartupError> {
         .name("notes")
         .policy(Policy::new().deny_anonymous().body_limit(64 * 1024))
         .security_headers(poring::SecurityHeaders::strict_api())
-        .route_with(RouteMethod::Get, "/health", Policy::new().public_with_reason("load balancer probe"), || async {
-            "ok"
-        })
+        .route_with(
+            RouteMethod::Get,
+            "/health",
+            Policy::new().public_with_reason("load balancer probe"),
+            || async { "ok" },
+        )
         .group("/api", |api| {
             api.policy(Policy::new().scopes(["notes:read"]))
                 .after(|_cx, res| {
-                    res.headers_mut().insert("cache-control", HeaderValue::from_static("no-store"));
+                    res.headers_mut()
+                        .insert("cache-control", HeaderValue::from_static("no-store"));
                 })
                 .get("/notes", list)
                 .route_with(
                     RouteMethod::Post,
                     "/notes",
-                    Policy::new().scopes(["notes:write"]).body_limit(4 * 1024).rate_limit(
-                        30,
-                        Duration::from_secs(60),
-                        RateKey::Principal,
-                    ),
+                    Policy::new()
+                        .scopes(["notes:write"])
+                        .body_limit(4 * 1024)
+                        .rate_limit(30, Duration::from_secs(60), RateKey::Principal),
                     create,
                 )
         })

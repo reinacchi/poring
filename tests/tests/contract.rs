@@ -11,7 +11,11 @@ async fn shop_app_end_to_end() {
     assert_eq!(c.get("/health").send().await.text(), "ok");
     let r = c
         .post("/v1/products")
-        .json(&NewProduct { name: "Rust in Action".into(), price_cents: 3999, category: Category::Books })
+        .json(&NewProduct {
+            name: "Rust in Action".into(),
+            price_cents: 3999,
+            category: Category::Books,
+        })
         .send()
         .await;
     assert_eq!(r.status, 201);
@@ -31,7 +35,11 @@ async fn shop_app_end_to_end() {
         .map(|i| i["rule"].as_str().unwrap().to_owned())
         .collect();
     assert_eq!(rules, ["ascii", "minimum"]);
-    let page: ProductPage = c.get("/v1/products?category=books&limit=5").send().await.json();
+    let page: ProductPage = c
+        .get("/v1/products?category=books&limit=5")
+        .send()
+        .await
+        .json();
     assert_eq!(page.total, 1);
     assert_eq!(c.get("/v1/products?category=toys").send().await.status, 400);
     assert_eq!(c.get("/v1/products/99").send().await.status, 404);
@@ -48,16 +56,29 @@ fn openapi_snapshot_is_deterministic() {
     let doc = serde_json::to_string_pretty(&a).unwrap();
     snapshot("shop.openapi.json", &doc);
     // Spot checks independent of the snapshot.
-    assert_eq!(a["paths"]["/v1/products/{id}"]["get"]["parameters"][0]["schema"]["type"], "integer");
-    assert_eq!(a["components"]["schemas"]["Category"]["enum"], serde_json::json!(["books", "home-appliances"]));
-    assert_eq!(a["components"]["schemas"]["NewProduct"]["additionalProperties"], false);
-    assert_eq!(a["paths"]["/v1/products"]["post"]["x-poring-policy"]["body_limit"], 8192);
+    assert_eq!(
+        a["paths"]["/v1/products/{id}"]["get"]["parameters"][0]["schema"]["type"],
+        "integer"
+    );
+    assert_eq!(
+        a["components"]["schemas"]["Category"]["enum"],
+        serde_json::json!(["books", "home-appliances"])
+    );
+    assert_eq!(
+        a["components"]["schemas"]["NewProduct"]["additionalProperties"],
+        false
+    );
+    assert_eq!(
+        a["paths"]["/v1/products"]["post"]["x-poring-policy"]["body_limit"],
+        8192
+    );
     assert!(a["paths"]["/v1/products"]["post"]["responses"]["422"].is_object());
 }
 
 #[test]
 fn typescript_client_typechecks() {
-    let doc = poring::openapi::openapi::<Shop>(&poring::openapi::Info::new("Shop", "1.0.0")).unwrap();
+    let doc =
+        poring::openapi::openapi::<Shop>(&poring::openapi::Info::new("Shop", "1.0.0")).unwrap();
     let ts = poring::openapi::typescript_client(&doc);
     snapshot("shop.client.ts", &ts);
     let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("ts-client");
@@ -107,6 +128,8 @@ void main;
         ),
         // CI installs TypeScript, so a missing compiler there is a failure, not a skip.
         Err(e) if std::env::var_os("CI").is_some() => panic!("`{program}` is required in CI: {e}"),
-        Err(e) => eprintln!("SKIPPED: `{program}` not available ({e}); TS client was generated but not type-checked"),
+        Err(e) => eprintln!(
+            "SKIPPED: `{program}` not available ({e}); TS client was generated but not type-checked"
+        ),
     }
 }

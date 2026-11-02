@@ -58,7 +58,8 @@ pub fn run_dev(a: DevArgs) -> Result<String, String> {
         cfg = cfg.grant(g);
     }
     let slot = GuestSlot::new(host, cfg, &bytes).map_err(|e| e.to_string())?;
-    let method = Method::parse(&a.method).ok_or_else(|| format!("unsupported method {}", a.method))?;
+    let method =
+        Method::parse(&a.method).ok_or_else(|| format!("unsupported method {}", a.method))?;
     let policy = DynPolicy {
         auth_required: Some(false),
         public_reason: Some("cargo poring dev host (development only)".into()),
@@ -71,7 +72,9 @@ pub fn run_dev(a: DevArgs) -> Result<String, String> {
     let _watch = watch(slot.clone(), &a.wasm, WatchConfig::default()).map_err(|e| e.to_string())?;
     let rt = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
     rt.block_on(async move {
-        let listener = tokio::net::TcpListener::bind(&a.addr).await.map_err(|e| e.to_string())?;
+        let listener = tokio::net::TcpListener::bind(&a.addr)
+            .await
+            .map_err(|e| e.to_string())?;
         eprintln!(
             "poring dev: pid {} serving guest `{}` ({}) at {} {} on http://{}  (watching {})",
             std::process::id(),

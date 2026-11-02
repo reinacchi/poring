@@ -26,7 +26,11 @@ impl<S: Sync, T: DeserializeOwned + PoringSchema + Send> FromRequest<S> for Json
         let body = read_body(cx).await?;
         // serde_json enforces a recursion limit of 128 by default, bounding nesting depth.
         let v: T = serde_json::from_slice(&body).map_err(|e| {
-            let code = if e.is_data() { "invalid_json_shape" } else { "malformed_json" };
+            let code = if e.is_data() {
+                "invalid_json_shape"
+            } else {
+                "malformed_json"
+            };
             rejection::bad_request(code, format!("invalid JSON body: {e}"))
         })?;
         if T::HAS_RULES {
