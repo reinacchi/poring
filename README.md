@@ -1,4 +1,4 @@
-<p align="center"><img src="Poring.png" alt="Poring Logo" width="350"/></p>
+<p align="center"><img src="https://raw.githubusercontent.com/reinacchi/poring/refs/heads/master/Poring.png" alt="Poring Logo" width="350"/></p>
 
 <h1 align="center">Poring</h1>
 <p align="center">
