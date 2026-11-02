@@ -10,7 +10,6 @@ members = [
 exclude = ["examples/wasm-guest"]
 
 [workspace.package]
-version = "0.1.1"
 edition = "2024"
 rust-version = "1.97"
 license = "MIT"
@@ -19,8 +18,8 @@ repository = "https://github.com/reinacchi/poring"
 homepage = "https://github.com/reinacchi/poring"
 
 [workspace.dependencies]
-poring = { path = "crates/poring", version = "0.1.0" }
-poring-macros = { path = "crates/poring-macros", version = "0.1.0" }
+poring = { path = "crates/poring", version = "0.1.1" }
+poring-macros = { path = "crates/poring-macros", version = "=0.1.1" }
 
 tokio = { version = "1.54", default-features = false }
 hyper = { version = "1.12", default-features = false }
