@@ -1,7 +1,11 @@
 //! The per-request pipeline: routing, security checks, dispatch and response finishing.
 
+use std::future::Future;
 use std::net::SocketAddr;
-use std::time::Instant;
+use std::pin::Pin;
+use std::sync::Arc;
+use std::task::Poll;
+use std::time::{Duration, Instant};
 
 use http::header::{HeaderName, HeaderValue};
 use http::{Request, StatusCode};
@@ -42,7 +46,7 @@ pub(super) struct AppInner<A: AppSpec> {
     pub(super) limits: Limits,
     pub(super) security_headers: SecurityHeaders,
     pub(super) on_request: Vec<OnRequest>,
-    pub(super) on_response: Vec<OnResponse>,
+    pub(super) on_response: Arc<[OnResponse]>,
     pub(super) error_mapper: Option<ErrorMapper>,
     pub(super) request_ids: bool,
     pub(super) proxies: TrustedProxies,
@@ -63,7 +67,11 @@ impl<A: AppSpec> AppInner<A> {
             None
         };
         let is_head = parts.method == http::Method::HEAD;
-        let origin = parts.headers.get(http::header::ORIGIN).cloned();
+        // The origin is only consulted when CORS is configured.
+        let origin = match self.cors {
+            Some(_) => parts.headers.get(http::header::ORIGIN).cloned(),
+            None => None,
+        };
         let method = parts.method.clone();
         if let Some(f) = flow.as_deref_mut() {
             f.mark(Stage::Receive);
@@ -219,27 +227,11 @@ impl<A: AppSpec> AppInner<A> {
             Ok(()) => {
                 let timeout = route.policy.timeout;
                 let res = match &route.target {
-                    Target::Static(i) => {
-                        let fut = A::dispatch(*i, &mut cx);
-                        match timeout {
-                            Some(d) => tokio::time::timeout(d, fut).await.ok(),
-                            None => Some(fut.await),
-                        }
-                    }
+                    Target::Static(i) => within(timeout, A::dispatch(*i, &mut cx)).await,
                     Target::Dynamic(ep) => {
-                        let fut = call_dynamic(ep.as_ref(), &mut cx);
-                        match timeout {
-                            Some(d) => tokio::time::timeout(d, fut).await.ok(),
-                            None => Some(fut.await),
-                        }
+                        within(timeout, call_dynamic(ep.as_ref(), &mut cx)).await
                     }
-                    Target::Native(i) => {
-                        let fut = self.call_native(*i, &mut cx);
-                        match timeout {
-                            Some(d) => tokio::time::timeout(d, fut).await.ok(),
-                            None => Some(fut.await),
-                        }
-                    }
+                    Target::Native(i) => within(timeout, self.call_native(*i, &mut cx)).await,
                 };
                 match res {
                     Some(r) => {
@@ -325,7 +317,7 @@ impl<A: AppSpec> AppInner<A> {
             }
             (_, false) => None,
         };
-        let probes: Vec<RateProbe<'_>> = rate
+        let probes: smallvec::SmallVec<[RateProbe<'_>; 4]> = rate
             .rules
             .iter()
             .map(|r| RateProbe {
@@ -496,8 +488,8 @@ impl<A: AppSpec> AppInner<A> {
     }
 
     fn finish(&self, mut res: Response, f: Finish<'_>) -> Response {
-        if let Some(fe) = res.extensions().get::<FrameworkError>().cloned()
-            && let Some(m) = &self.error_mapper
+        if let Some(m) = &self.error_mapper
+            && let Some(fe) = res.extensions().get::<FrameworkError>().cloned()
         {
             res = m(&fe, res);
         }
@@ -544,7 +536,7 @@ impl<A: AppSpec> AppInner<A> {
             *res.body_mut() = crate::body::Body::empty();
         }
         let status = res.status();
-        let route_id = f.route.map(|r| r.id.clone());
+        let route_id = f.route.map(|r| r.id.as_str());
         if f.flow.is_some() || !self.on_response.is_empty() {
             let mut flow = f.flow;
             if let Some(fl) = flow.as_deref_mut() {
@@ -554,12 +546,12 @@ impl<A: AppSpec> AppInner<A> {
             let rid = f.request_id.to_string();
             let method = f.method;
             let start = f.start;
-            let traces = flow.map(|fl| fl.finish(&rid, route_id.as_deref(), status.as_u16()));
+            let traces = flow.map(|fl| fl.finish(&rid, route_id, status.as_u16()));
             if let Some(t) = traces {
                 self.recorder.push(t);
             }
             if !hooks.is_empty() {
-                let info_route = route_id.clone();
+                let info_route = route_id.map(str::to_owned);
                 res.body_mut().on_done(move |end| {
                     let info = ResponseInfo {
                         request_id: rid,
@@ -569,7 +561,7 @@ impl<A: AppSpec> AppInner<A> {
                         elapsed: start.elapsed(),
                         end,
                     };
-                    for h in &hooks {
+                    for h in hooks.iter() {
                         h(&info);
                     }
                 });
@@ -577,14 +569,14 @@ impl<A: AppSpec> AppInner<A> {
         }
         let span = tracing::Span::current();
         if !span.is_disabled() {
-            span.record("route", route_id.as_deref().unwrap_or("-"));
+            span.record("route", route_id.unwrap_or("-"));
             span.record("status", status.as_u16());
             span.record("request_id", tracing::field::display(&f.request_id));
         }
         tracing::debug!(
             target: "poring::request",
             request_id = %f.request_id,
-            route = route_id.as_deref().unwrap_or("-"),
+            route = route_id.unwrap_or("-"),
             status = status.as_u16(),
             elapsed_us = f.start.elapsed().as_micros() as u64,
         );
@@ -647,6 +639,38 @@ fn apply_rate_headers(
         (false, true) => &["RateLimit", "RateLimit-Policy"],
         (false, false) => &[],
     }
+}
+
+/// Awaits `fut`, giving up after `limit` with the same semantics as `tokio::time::timeout`:
+/// the deadline is fixed before the first poll, the future is polled before the timer, and
+/// the timer is polled without a budget when the future used up the task's budget. The timer
+/// is only created once the future returns `Pending`, so handlers that complete on their
+/// first poll never touch the timer wheel.
+async fn within<F: Future>(limit: Option<Duration>, fut: F) -> Option<F::Output> {
+    let Some(deadline) = limit.and_then(|d| tokio::time::Instant::now().checked_add(d)) else {
+        return Some(fut.await);
+    };
+    let mut fut = std::pin::pin!(fut);
+    let mut timer = std::pin::pin!(None::<tokio::time::Sleep>);
+    std::future::poll_fn(|cx| {
+        let had_budget = tokio::task::coop::has_budget_remaining();
+        if let Poll::Ready(v) = fut.as_mut().poll(cx) {
+            return Poll::Ready(Some(v));
+        }
+        if timer.is_none() {
+            timer.set(Some(tokio::time::sleep_until(deadline)));
+        }
+        let Some(delay) = timer.as_mut().as_pin_mut() else {
+            return Poll::Pending;
+        };
+        let elapsed = if had_budget && !tokio::task::coop::has_budget_remaining() {
+            Pin::new(&mut tokio::task::coop::unconstrained(delay)).poll(cx)
+        } else {
+            delay.poll(cx)
+        };
+        elapsed.map(|()| None)
+    })
+    .await
 }
 
 async fn call_dynamic<S>(ep: &dyn crate::dynamic::DynEndpoint, cx: &mut Ctx<'_, S>) -> Response {

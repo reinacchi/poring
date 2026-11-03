@@ -275,6 +275,10 @@ impl RateRule {
     }
 }
 
+/// Per-request scratch storage: routes rarely carry more than a few limits, so the common
+/// case stays on the stack.
+type Inline<T> = smallvec::SmallVec<[T; 4]>;
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct BucketKey {
     scope: u32,
@@ -583,22 +587,22 @@ impl RateLimiter {
         commit: bool,
     ) -> (RateLimitDecision, usize) {
         let now_ns = self.now_ns(now);
-        let keys: Vec<BucketKey> = probes
+        let keys: Inline<BucketKey> = probes
             .iter()
             .map(|p| BucketKey {
                 scope: p.rule.scope,
                 id: p.key.clone(),
             })
             .collect();
-        let slots: Vec<usize> = keys.iter().map(|k| self.shard_of(k)).collect();
-        let mut order: Vec<usize> = slots.clone();
+        let slots: Inline<usize> = keys.iter().map(|k| self.shard_of(k)).collect();
+        let mut order: Inline<usize> = slots.clone();
         order.sort_unstable();
         order.dedup();
-        let mut guards: Vec<(usize, MutexGuard<'_, HashMap<BucketKey, Bucket>>)> =
+        let mut guards: Inline<(usize, MutexGuard<'_, HashMap<BucketKey, Bucket>>)> =
             order.iter().map(|&i| (i, self.lock(i))).collect();
         let guard_index = |shard: usize| order.binary_search(&shard).unwrap_or(0);
 
-        let evaluated: Vec<Evaluated> = probes
+        let evaluated: Inline<Evaluated> = probes
             .iter()
             .zip(&keys)
             .zip(&slots)
@@ -781,6 +785,45 @@ mod tests {
         match d {
             RateLimitDecision::Allowed(s) | RateLimitDecision::Denied(s) => s,
             RateLimitDecision::Saturated { .. } => panic!("unexpected saturation"),
+        }
+    }
+
+    #[test]
+    fn many_probes_are_all_or_nothing_beyond_inline_storage() {
+        // More rules than the per-request scratch storage holds inline.
+        let rl = RateLimiter::new(1024);
+        let t0 = Instant::now();
+        let rules: Vec<RateRule> = (0..6)
+            .map(|scope| RateRule {
+                scope,
+                limit: if scope == 5 { 1 } else { 10 },
+                window_ns: 10_000_000_000,
+            })
+            .collect();
+        let k = ip(9);
+        let probes: Vec<RateProbe<'_>> = rules
+            .iter()
+            .map(|&rule| RateProbe { rule, key: &k })
+            .collect();
+        let (first, index) = rl.check_indexed(&probes, t0);
+        assert!(first.is_allowed());
+        assert_eq!(index, 5, "the tightest rule is reported");
+        let (denied, index) = rl.check_indexed(&probes, t0);
+        assert!(!denied.is_allowed());
+        assert_eq!(index, 5);
+        for rule in &rules[..5] {
+            let s = status(rl.peek(
+                &[RateProbe {
+                    rule: *rule,
+                    key: &k,
+                }],
+                t0,
+            ));
+            // One token was taken by the allowed request; the peek accounts for the next.
+            assert_eq!(
+                s.remaining, 8,
+                "a denied request takes no token from any bucket"
+            );
         }
     }
 

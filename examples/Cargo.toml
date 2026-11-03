@@ -73,3 +73,7 @@ path = "fluent_api.rs"
 [[example]]
 name = "rate_limits"
 path = "rate_limits.rs"
+
+[[example]]
+name = "bench_server"
+path = "bench_server.rs"

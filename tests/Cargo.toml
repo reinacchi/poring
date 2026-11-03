@@ -34,6 +34,7 @@ futures-util = { version = "0.3", default-features = false, features = ["sink", 
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 tempfile = "3"
+dhat = "0.3"
 
 [[test]]
 name = "wasm_guest"

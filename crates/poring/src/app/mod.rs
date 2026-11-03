@@ -568,7 +568,7 @@ impl<A: AppSpec> App<A> {
                 limits: cfg.limits,
                 security_headers: cfg.security_headers,
                 on_request: cfg.on_request,
-                on_response: cfg.on_response,
+                on_response: cfg.on_response.into(),
                 error_mapper: cfg.error_mapper,
                 request_ids: cfg.request_ids,
                 proxies,
