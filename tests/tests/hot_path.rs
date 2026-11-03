@@ -1,5 +1,6 @@
 //! Regression tests for the request hot path: router API and macro parity, socket and
-//! in-process parity, timeouts, request IDs, hooks, CORS, error mapping and tracing.
+//! in-process parity, timeouts, request IDs, hooks, CORS and error mapping. Tracing parity
+//! lives in `tracing_parity.rs`, which needs a test binary of its own.
 
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -405,62 +406,4 @@ async fn error_mapping_runs_only_for_framework_errors() {
         Some("not_found")
     );
     assert_eq!(c.get("/bench/plain").send().await.header("x-mapped"), None);
-}
-
-#[derive(Clone, Default)]
-struct Captured(Arc<Mutex<Vec<u8>>>);
-
-impl std::io::Write for Captured {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.0.lock().unwrap().extend_from_slice(buf);
-        Ok(buf.len())
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn tracing_does_not_change_responses_and_records_the_route() {
-    let plain_app = fluent().build().unwrap();
-    let traced_app = fluent().build().unwrap();
-    let untraced = plain_app.client().get("/bench/path/5").send().await;
-
-    let out = Captured::default();
-    let writer = out.clone();
-    let subscriber = tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::DEBUG)
-        .with_ansi(false)
-        .with_writer(move || writer.clone())
-        .finish();
-    let _guard = tracing::subscriber::set_default(subscriber);
-    let server = fluent().build().unwrap().bind("127.0.0.1:0").await.unwrap();
-    let raw = raw_http(
-        server.local_addr(),
-        b"GET /bench/path/5?secret=1 HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
-    )
-    .await;
-    let traced = traced_app.client().get("/bench/path/5").send().await;
-    server.shutdown().await.unwrap();
-
-    assert_eq!(shape(&untraced), shape(&traced));
-    assert!(raw.ends_with("\r\n\r\n5"), "{raw}");
-    let log = String::from_utf8(out.0.lock().unwrap().clone()).unwrap();
-    let route = traced_app
-        .manifest()
-        .routes
-        .iter()
-        .find(|r| r.path == "/bench/path/{id}")
-        .map(|r| r.id.clone())
-        .unwrap();
-    assert!(log.contains("poring.request"), "{log}");
-    assert!(
-        log.contains(&format!("route=\"{route}\"")) || log.contains(&format!("route={route}")),
-        "{log}"
-    );
-    assert!(log.contains("status=200"), "{log}");
-    assert!(
-        !log.contains("secret"),
-        "query strings are never recorded: {log}"
-    );
 }
