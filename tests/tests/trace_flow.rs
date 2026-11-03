@@ -1,8 +1,8 @@
 //! Static graph determinism, runtime traces aligned with static node IDs,
-//! redaction, bounded recording, and the tracing span.
+//! redaction and bounded recording. The tracing events are checked in `trace_events.rs`,
+//! which needs a test binary of its own.
 
 use std::collections::BTreeSet;
-use std::sync::{Arc, Mutex};
 
 use poring::contract::{
     RuntimeTrace, build_graph, render_dot, render_json, render_mermaid, render_mermaid_with_trace,
@@ -259,41 +259,4 @@ async fn overlay_highlights_traversed_edges_only() {
         mmd,
     )
     .unwrap();
-}
-
-#[derive(Clone, Default)]
-struct Capture(Arc<Mutex<Vec<String>>>);
-impl std::io::Write for Capture {
-    fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
-        self.0
-            .lock()
-            .unwrap()
-            .push(String::from_utf8_lossy(b).into_owned());
-        Ok(b.len())
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
-#[tokio::test]
-async fn tracing_events_use_graph_node_ids_without_secrets() {
-    let cap = Capture::default();
-    let w = cap.clone();
-    let sub = tracing_subscriber::fmt()
-        .with_env_filter("poring::flow=trace")
-        .with_writer(move || w.clone())
-        .with_ansi(false)
-        .finish();
-    let _g = tracing::subscriber::set_default(sub);
-    let app = recording_app(8);
-    app.client()
-        .get("/notes")
-        .bearer("reader-token")
-        .send()
-        .await;
-    let out = cap.0.lock().unwrap().concat();
-    assert!(out.contains("node=get_notes.auth"), "{out}");
-    assert!(out.contains("node=get_notes.handler"), "{out}");
-    assert!(!out.contains("reader-token"));
 }
