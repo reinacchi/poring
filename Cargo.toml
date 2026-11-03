@@ -18,7 +18,7 @@ repository = "https://github.com/reinacchi/poring"
 homepage = "https://github.com/reinacchi/poring"
 
 [workspace.dependencies]
-poring = { path = "crates/poring", version = "0.1.1" }
+poring = { path = "crates/poring", version = "0.1.2" }
 poring-macros = { path = "crates/poring-macros", version = "=0.1.1" }
 
 tokio = { version = "1.54", default-features = false }
