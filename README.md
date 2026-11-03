@@ -22,7 +22,7 @@ Build web applications with a clean, expressive API without route attributes.
 ```rust
 use poring::prelude::*;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), poring::StartupError> {
     Poring::new()
         .get("/", || async {
             "Hello, Poring!"
