@@ -4,7 +4,7 @@
 <p align="center">
     <strong>Ergonomic Rust web framework built on Tokio and Hyper.</strong>
     <br>
-    Poring is a high-performance, type-safe Rust web framework built on Tokio and Hyper. It allows building reliable web applications straightforward with expressive routing, first-class route policies, built-in tracing, and WebAssembly support.
+    Poring is a high-performance, type-safe Rust web framework built on Tokio and Hyper. It simplifies building reliable web apps with expressive routing, first-class route policies, native tracing, and WebAssembly support.
 </p>
 
 <p align="center">
