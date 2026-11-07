@@ -107,9 +107,6 @@ required-features = ["json", "trace-flow"]
 name = "tracing_parity"
 
 [[test]]
-name = "readme"
-
-[[test]]
 name = "ui"
 
 [[test]]

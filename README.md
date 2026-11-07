@@ -67,43 +67,4 @@ async fn main() -> Result<(), poring::StartupError> {
 }
 ```
 
-### WebSockets
-
-Enable the `websocket` feature (add `http2` for RFC 8441 WebSockets over HTTP/2 and
-`tls-rustls` for native `wss://`). WebSocket routes go through the same policy pipeline as
-every route: origin check, rate limits, authentication and authorization run before the
-upgrade.
-
-<!-- poring:websocket:start -->
-```rust
-use poring::prelude::*;
-use poring::ws::{ManagedSocket, WebSocketUpgrade};
-
-fn main() -> Result<(), poring::StartupError> {
-    Poring::new()
-        .ws("/echo", |ws: WebSocketUpgrade| async move {
-            // Managed sessions keep pinging, detect dead peers and close cleanly.
-            ws.max_message_size(64 * 1024).managed().on_upgrade(
-                |mut sock: ManagedSocket| async move {
-                    while let Some(msg) = sock.recv().await {
-                        if sock.send(msg).await.is_err() {
-                            break;
-                        }
-                    }
-                },
-            )
-        })
-        .run("127.0.0.1:3000")?;
-
-    Ok(())
-}
-```
-<!-- poring:websocket:end -->
-
-See the [WebSocket guide](docs/WEBSOCKETS.md) for transports, security, limits, heartbeats,
-shutdown, observability and deployment, and the [Cargo feature reference](docs/FEATURES.md)
-for every feature and its dependencies.
-
-## Examples
-
 See more examples [here](/examples/).

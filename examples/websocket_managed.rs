@@ -1,4 +1,4 @@
-//! Managed WebSocket echo (the README's WebSocket example).
+//! Managed WebSocket echo: Poring drives the socket (pings, idle detection, close codes).
 //!
 //! ```text
 //! cargo run -p poring-examples --example websocket_managed
