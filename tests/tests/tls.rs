@@ -235,3 +235,59 @@ async fn plaintext_and_stalled_clients_do_not_block_tls_service() {
     );
     server.shutdown().await.unwrap();
 }
+
+/// Raw HTTP/1.1 WebSocket handshake over TLS; returns the response head.
+async fn tls_handshake_head(pki: &Pki, addr: SocketAddr, origin: Option<&str>) -> String {
+    let mut tls = tls_connect(pki, addr, &[b"http/1.1"]).await;
+    let origin = origin
+        .map(|o| format!("Origin: {o}\r\n"))
+        .unwrap_or_default();
+    let req = format!(
+        "GET /echo HTTP/1.1\r\nHost: localhost:{}\r\nConnection: Upgrade\r\n\
+         Upgrade: websocket\r\nSec-WebSocket-Version: 13\r\n\
+         Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n{origin}\r\n",
+        addr.port()
+    );
+    tls.write_all(req.as_bytes()).await.unwrap();
+    let mut buf = Vec::new();
+    let mut chunk = [0u8; 1024];
+    let _ = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let n = tls.read(&mut chunk).await.unwrap_or(0);
+            if n == 0 {
+                break;
+            }
+            buf.extend_from_slice(&chunk[..n]);
+            if buf.windows(4).any(|w| w == b"\r\n\r\n") {
+                break;
+            }
+        }
+    })
+    .await;
+    String::from_utf8_lossy(&buf).into_owned()
+}
+
+/// P1 regression: on a native TLS (wss://) endpoint, a same-host `http://` origin used to be
+/// accepted (the scheme was ignored). It must be refused; the `https://` origin upgrades.
+#[tokio::test]
+async fn wss_endpoints_refuse_plain_http_origins() {
+    let pki = pki();
+    let server = server(&pki, Duration::from_secs(5)).await;
+    let addr = server.local_addr();
+    let port = addr.port();
+    let cases = [
+        (Some(format!("https://localhost:{port}")), "101"),
+        (Some(format!("http://localhost:{port}")), "403"),
+        (Some("http://localhost".to_owned()), "403"),
+        (None, "101"),
+    ];
+    for (origin, want) in cases {
+        let head = tls_handshake_head(&pki, addr, origin.as_deref()).await;
+        assert!(
+            head.starts_with(&format!("HTTP/1.1 {want}")),
+            "origin {origin:?}: {head}"
+        );
+    }
+    assert_eq!(server.ws_stats().origin_denied, 2);
+    server.shutdown().await.unwrap();
+}

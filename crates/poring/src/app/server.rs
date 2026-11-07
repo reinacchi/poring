@@ -145,7 +145,7 @@ impl<A: AppSpec> App<A> {
             connections.0.spawn(async move {
                 let _permit = permit;
                 match transport {
-                    Transport::Plain => serve_conn(app, stream, peer, conn, &mut stop).await,
+                    Transport::Plain => serve_conn(app, stream, false, peer, conn, &mut stop).await,
                     #[cfg(feature = "tls-rustls")]
                     Transport::Tls(acceptor) => {
                         let limit = app.inner.limits.header_read_timeout;
@@ -155,7 +155,7 @@ impl<A: AppSpec> App<A> {
                             _ = stop.wait_for(|s| *s) => return,
                         };
                         match tls {
-                            Ok(Ok(tls)) => serve_conn(app, tls, peer, conn, &mut stop).await,
+                            Ok(Ok(tls)) => serve_conn(app, tls, true, peer, conn, &mut stop).await,
                             // No key material or peer data in these messages.
                             Ok(Err(e)) => tracing::debug!(error = %e, "tls handshake failed"),
                             Err(_) => tracing::debug!("tls handshake timed out"),
@@ -222,6 +222,7 @@ struct Conn {
 async fn serve_conn<A: AppSpec, S>(
     app: App<A>,
     stream: S,
+    tls: bool,
     peer: SocketAddr,
     conn: Conn,
     stop: &mut tokio::sync::watch::Receiver<bool>,
@@ -230,7 +231,7 @@ async fn serve_conn<A: AppSpec, S>(
 {
     // Without WebSocket support no request can be upgraded into a session.
     #[cfg(not(feature = "websocket"))]
-    drop(conn);
+    let _ = (conn, tls);
     let io = hyper_util::rt::TokioIo::new(stream);
     let header_timeout = app.inner.limits.header_read_timeout;
     let svc = hyper::service::service_fn(move |req: Request<hyper::body::Incoming>| {
@@ -248,6 +249,11 @@ async fn serve_conn<A: AppSpec, S>(
         .is_some()
         {
             let client_ip = app.inner.proxies.client_ip(peer.ip(), req.headers());
+            // The origin check compares origins with the endpoint's scheme.
+            if tls {
+                req.extensions_mut()
+                    .insert(crate::policy::ws_origin::SecureTransport);
+            }
             req.extensions_mut().insert(crate::ws::Admission {
                 supervisor: conn.sessions.clone(),
                 connection: conn.permit.clone(),

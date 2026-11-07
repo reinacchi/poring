@@ -144,6 +144,16 @@ name = "ws_reliability"
 required-features = ["websocket"]
 
 [[test]]
+# P1/P2 hardening: inbound stall deadline, origin scheme, typed recv errors, metrics.
+name = "ws_hardening"
+required-features = ["websocket"]
+
+[[test]]
+# Property-based fuzzing of malformed WebSocket input over real TCP.
+name = "ws_fuzz"
+required-features = ["json", "websocket"]
+
+[[test]]
 # HTTP/1.1 always; the HTTP/2, TLS and WebSocket cases run when those features are on.
 name = "shutdown"
 

@@ -17,8 +17,10 @@
 //! * Protocols: TLS 1.3 and 1.2 with rustls' safe defaults (ring crypto provider); no
 //!   client certificates. ALPN offers `h2` (with the `http2` feature) and `http/1.1`, so
 //!   HTTP/2 clients — including RFC 8441 WebSockets — negotiate HTTP/2 and others HTTP/1.1.
-//! * WebSockets work unchanged over TLS (`wss://`). Origins are compared exactly as for
-//!   plain HTTP; browsers send `Origin: https://…`.
+//! * WebSockets work unchanged over TLS (`wss://`). The endpoint is known to be secure, so
+//!   a same-origin match requires an `https://` origin: a page served over plain HTTP
+//!   (`Origin: http://…`) is cross-origin for a `wss://` endpoint and is refused unless an
+//!   allow-list entry names it.
 //! * The TLS handshake of each connection runs in that connection's task, bounded by
 //!   `Limits::header_read_timeout` and abandoned at shutdown, so slow or hostile clients
 //!   cannot stall the accept loop. Handshake failures are logged at debug level without

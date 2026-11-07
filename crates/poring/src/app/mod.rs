@@ -124,6 +124,46 @@ impl Default for Limits {
     }
 }
 
+impl Limits {
+    /// Stricter limits for internet-facing production deployments. Every other default is
+    /// already safe; this preset additionally caps per-client WebSocket sessions and
+    /// shortens the header timeout:
+    ///
+    /// | field | default | `production()` |
+    /// |---|---|---|
+    /// | `max_connections` | 10 000 | 10 000 |
+    /// | `max_ws_sessions` | 10 000 | 5 000 |
+    /// | `max_ws_sessions_per_ip` | unlimited | 64 |
+    /// | `max_ws_sessions_per_principal` | unlimited | 16 |
+    /// | `header_read_timeout` | 30 s | 10 s |
+    /// | `shutdown_grace` | 10 s | 20 s |
+    /// | `max_query_bytes`, `max_form_fields`, `rate_limit_keys` | 8 KiB, 256, 100 000 | unchanged |
+    ///
+    /// Tune the per-IP cap to the largest number of sessions you expect behind one NAT or
+    /// proxy address, and set `max_connections` / `max_ws_sessions` from your memory budget
+    /// (see the deployment guide). Combine with `trusted_proxies`, an explicit
+    /// [`WsOrigins`](crate::policy::WsOrigins) policy (`https_only()` for public HTTPS) and
+    /// per-session limits on each upgrade.
+    ///
+    /// ```
+    /// let limits = poring::Limits {
+    ///     max_ws_sessions_per_ip: 256,
+    ///     ..poring::Limits::production()
+    /// };
+    /// assert_eq!(limits.max_ws_sessions_per_principal, 16);
+    /// ```
+    pub fn production() -> Self {
+        Limits {
+            max_ws_sessions: 5_000,
+            max_ws_sessions_per_ip: 64,
+            max_ws_sessions_per_principal: 16,
+            header_read_timeout: Duration::from_secs(10),
+            shutdown_grace: Duration::from_secs(20),
+            ..Limits::default()
+        }
+    }
+}
+
 /// Information passed to after-response hooks (no bodies, headers or credentials).
 #[derive(Clone, Debug)]
 pub struct ResponseInfo {

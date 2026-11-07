@@ -1,16 +1,25 @@
 name: heavy
 # Slow, heavyweight verification that would make every pull request expensive: the Wasm
 # feature family (Wasmtime), `--all-features`, the standalone wasm32 guest, the CLI demo
-# and package validation. Runs weekly, on demand (Actions > heavy > Run workflow), and on
-# release tags. Commands live in scripts/verify-ci.sh (`scripts/verify-ci.sh heavy`).
+# and package validation. It gates merges and releases: it runs on every pull request into
+# master, on every push to master, on release tags, weekly (to catch dependency and
+# toolchain drift) and on demand (Actions > heavy > Run workflow). Make the `heavy-gate`
+# job a required status check on master. Commands live in scripts/verify-ci.sh
+# (`scripts/verify-ci.sh heavy`; `release` adds the security audit).
 on:
+  pull_request:
+    branches: [master, main]
+  push:
+    branches: [master, main]
+    tags: ["v*"]
   schedule:
     - cron: "17 3 * * 1"
   workflow_dispatch:
-  push:
-    tags: ["v*"]
 permissions:
   contents: read
+concurrency:
+  group: heavy-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: "1"
@@ -76,3 +85,24 @@ jobs:
         with: { workspaces: "benches/ws-bench" }
       # 100 connections per profile: leak and cleanup checks, not a benchmark.
       - run: bash scripts/verify-ci.sh --fail-fast stress-smoke
+
+  security:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
+        with: { toolchain: "1.97.0" }
+      - run: cargo install --locked cargo-audit
+      # RustSec advisories for every lockfile; a vulnerability fails the job.
+      - run: bash scripts/verify-ci.sh --fail-fast security
+
+  # One required status check for branch protection and the release workflow.
+  heavy-gate:
+    if: always()
+    needs: [wasm-features, wasm-tests, all-features, package, stress-smoke, security]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: every heavy job passed
+        run: |
+          echo '${{ toJSON(needs) }}' | python3 -c 'import json,sys; n=json.load(sys.stdin); bad=[k for k,v in n.items() if v["result"]!="success"]; print("failed:",bad) if bad else print("all passed"); sys.exit(1 if bad else 0)'

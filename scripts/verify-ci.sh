@@ -11,6 +11,8 @@
 #   heavy           wasm-features wasm-tests all-features package stress-smoke
 #                                                                     (weekly / on demand)
 #   everything      ci + heavy
+#   security        cargo audit of every lockfile against the RustSec advisory DB
+#   release         everything + security: the gate a release tag must pass
 #   lint | core | examples | docs | wasm-tests | all-features | package | stress-smoke
 #   features [FLAGS]        one feature-matrix entry, or all of them
 #   isolated-tests [FEATS]  one integration-test feature group, or all of them
@@ -25,6 +27,7 @@
 #   rustup toolchain install 1.97.0 -c rustfmt -c clippy -t wasm32-unknown-unknown
 #   Node.js 22 and `npm install -g typescript@7.0.2` (core, isolated-tests, all-features)
 #   curl (wasm-tests demo)
+#   cargo install --locked cargo-audit (security, release)
 #
 # Failures are aggregated: every command runs, each failure is reported with its exit
 # code, and the script exits non-zero if any failed (with --fail-fast it stops at the
@@ -233,13 +236,13 @@ t_package() {
 # Builds and runs scripts/consumer (HTTP, macros, WebSocket origin policy, typed managed
 # WebSockets) against the extracted `.crate` files only, outside the workspace.
 package_consumer() {
-  local dir version_p version_m
+  local dir version_p version_m pkg="${CARGO_TARGET_DIR:-target}/package"
   dir="$(mktemp -d)"
   version_p="$("${CARGO[@]}" pkgid -p poring | sed 's/.*[#@]//')"
   version_m="$("${CARGO[@]}" pkgid -p poring-macros | sed 's/.*[#@]//')"
   mkdir -p "$dir/vendor" "$dir/src" &&
-    tar xzf "target/package/poring-$version_p.crate" -C "$dir/vendor" &&
-    tar xzf "target/package/poring-macros-$version_m.crate" -C "$dir/vendor" &&
+    tar xzf "$pkg/poring-$version_p.crate" -C "$dir/vendor" &&
+    tar xzf "$pkg/poring-macros-$version_m.crate" -C "$dir/vendor" &&
     mv "$dir/vendor/poring-$version_p" "$dir/vendor/poring" &&
     mv "$dir/vendor/poring-macros-$version_m" "$dir/vendor/poring-macros" &&
     cp scripts/consumer/Cargo.toml.in "$dir/Cargo.toml" &&
@@ -281,6 +284,16 @@ stress_smoke_check() {
     END { exit (bad || rows != 8) }'
 }
 
+# RustSec advisories for the workspace and every standalone lockfile (benches, guest).
+# Warnings (unmaintained/yanked crates) are printed; vulnerabilities fail the target.
+t_security() {
+  need cargo-audit "cargo install --locked cargo-audit" || return
+  local lock
+  while IFS= read -r lock; do
+    run cargo audit --file "$lock"
+  done < <(find . -name Cargo.lock -not -path '*/target/*' -not -path './.git/*' | sort)
+}
+
 t_heavy() {
   t_wasm_features
   t_wasm_tests
@@ -299,6 +312,8 @@ case "$TARGET" in
   ci) t_ci ;;
   heavy) t_heavy ;;
   everything) t_ci; t_heavy ;;
+  security) t_security ;;
+  release) t_ci; t_heavy; t_security ;;
   lint) t_lint ;;
   core) t_core ;;
   features) t_features ;;

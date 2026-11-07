@@ -22,9 +22,17 @@
 //!   shutdown (see [`ManagedUpgrade::write_timeout`]).
 //! * The upgrade request itself goes through the normal policy pipeline (auth, rate
 //!   limits) before `on_upgrade` runs. Handshakes carrying an `Origin` header must be
-//!   same-origin or listed explicitly in the app's CORS origins (the `*` wildcard does not
-//!   count); otherwise they are rejected with 403 before any `101`. Handshakes without
-//!   `Origin` (non-browser clients) are allowed: Origin is not authentication.
+//!   same-origin or listed explicitly in the app's CORS origins or
+//!   [`WsOrigins`](crate::policy::WsOrigins) (the `*` wildcard does not count); otherwise
+//!   they are rejected with 403 before any `101`. Same-origin includes the scheme whenever
+//!   the endpoint's scheme is known (native TLS, HTTP/2 `:scheme`, or a trusted proxy's
+//!   `Forwarded`/`X-Forwarded-Proto`): an `http://` page cannot reach a `wss://` endpoint
+//!   by host match alone. `WsOrigins::https_only` refuses every non-`https` origin.
+//!   Handshakes without `Origin` (non-browser clients) are allowed: Origin is not
+//!   authentication.
+//! * Managed sessions whose handler stops reading are closed with `1013` after
+//!   [`ManagedUpgrade::stall_timeout`] (default 60 s), so a stuck handler cannot hold its
+//!   session slot indefinitely.
 //! * The handshake is validated before `101` (RFC 6455 §4.2.1): HTTP/1.1 `GET` with
 //!   `Connection: upgrade` and `Upgrade: websocket` tokens, exactly one
 //!   `Sec-WebSocket-Version: 13` (otherwise `426` advertising 13, or `400` if missing or
@@ -301,9 +309,11 @@ const RATE_EXCEEDED: &str = "message rate exceeded";
 /// app was built, except `active_sessions`.
 ///
 /// Message and byte counts cover [managed](WebSocketUpgrade::managed) and
-/// [typed](WebSocketUpgrade::typed) sessions only (raw sockets are not observed) and are
-/// added when a session ends, so long-lived sessions show up in them late. Payloads,
-/// headers and credentials are never recorded.
+/// [typed](WebSocketUpgrade::typed) sessions only (raw sockets are not observed). Each
+/// session accumulates them locally and publishes them at least every 64 messages, when a
+/// message arrives or leaves more than a second after the last publication, on every
+/// managed heartbeat tick, and when the session ends, so long-lived sessions are visible
+/// while they run. Payloads, headers and credentials are never recorded.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct WsStats {
@@ -352,6 +362,20 @@ pub struct WsStats {
     /// Managed sessions ended because an outbound message could not be written within
     /// `write_timeout` (a peer that stopped reading).
     pub write_timeouts: u64,
+    /// Managed sessions closed with `1013` because the handler did not take an inbound
+    /// message within `stall_timeout`.
+    pub inbound_stalls: u64,
+    /// Inbound messages that had to wait for room in a managed handler's queue (the pump
+    /// stopped reading the socket meanwhile): a measure of inbound queue pressure.
+    pub inbound_backpressure: u64,
+    /// Managed `send` calls that had to wait for the outbound queue or its byte budget: a
+    /// measure of outbound queue pressure (slow peers).
+    pub outbound_backpressure: u64,
+    /// Managed or typed sessions whose peer sent a close frame.
+    pub peer_closes: u64,
+    /// Managed sessions closed by the application (`close`, or the handler returning), with
+    /// `1000` or the application's code.
+    pub server_closes: u64,
 }
 
 /// Rare session events counted directly.
@@ -372,13 +396,21 @@ pub(crate) enum WsEvent {
     AbnormalDisconnect,
     HeartbeatTimeout,
     WriteTimeout,
+    InboundStall,
+    InboundBackpressure,
+    OutboundBackpressure,
+    PeerClose,
+    ServerClose,
 }
+
+/// Number of [`WsEvent`] variants.
+const WS_EVENTS: usize = WsEvent::ServerClose as usize + 1;
 
 /// App-wide WebSocket counters: relaxed atomics, touched on handshakes, session start/end
 /// and rare events only (per-message counts are accumulated per session).
 #[derive(Debug, Default)]
 pub(crate) struct WsCounters {
-    events: [std::sync::atomic::AtomicU64; 15],
+    events: [std::sync::atomic::AtomicU64; WS_EVENTS],
     active: std::sync::atomic::AtomicU64,
     ended: std::sync::atomic::AtomicU64,
     messages_received: std::sync::atomic::AtomicU64,
@@ -420,6 +452,11 @@ impl WsCounters {
             abnormal_disconnects: self.event(WsEvent::AbnormalDisconnect),
             heartbeat_timeouts: self.event(WsEvent::HeartbeatTimeout),
             write_timeouts: self.event(WsEvent::WriteTimeout),
+            inbound_stalls: self.event(WsEvent::InboundStall),
+            inbound_backpressure: self.event(WsEvent::InboundBackpressure),
+            outbound_backpressure: self.event(WsEvent::OutboundBackpressure),
+            peer_closes: self.event(WsEvent::PeerClose),
+            server_closes: self.event(WsEvent::ServerClose),
         }
     }
 }
@@ -442,32 +479,82 @@ impl Drop for ActiveSession {
     }
 }
 
-/// Per-session message/byte counts, added to the app counters once, when dropped.
-#[derive(Debug, Default)]
+/// Messages a session counts locally before publishing them to the app counters.
+const METER_BATCH: u64 = 64;
+/// Longest time a busy session keeps counts unpublished.
+const METER_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// Per-session message/byte counts. Accumulated locally (no shared-cache-line traffic per
+/// message) and published to the app counters in batches: every [`METER_BATCH`] messages,
+/// when [`METER_INTERVAL`] has passed at the next message, on [`flush`](Self::flush) and
+/// when dropped.
+#[derive(Debug)]
 struct SessionMeter {
     counters: Option<std::sync::Arc<WsCounters>>,
     messages_received: u64,
     messages_sent: u64,
     bytes_received: u64,
     bytes_sent: u64,
+    last_flush: std::time::Instant,
+}
+
+impl Default for SessionMeter {
+    fn default() -> Self {
+        SessionMeter::new(None)
+    }
 }
 
 impl SessionMeter {
     fn new(counters: Option<std::sync::Arc<WsCounters>>) -> Self {
         SessionMeter {
             counters,
-            ..Default::default()
+            messages_received: 0,
+            messages_sent: 0,
+            bytes_received: 0,
+            bytes_sent: 0,
+            last_flush: std::time::Instant::now(),
         }
     }
 
     fn received(&mut self, m: &Message) {
         self.messages_received += 1;
         self.bytes_received += m.len() as u64;
+        self.maybe_flush();
     }
 
     fn sent(&mut self, m: &Message) {
         self.messages_sent += 1;
         self.bytes_sent += m.len() as u64;
+        self.maybe_flush();
+    }
+
+    fn maybe_flush(&mut self) {
+        if self.counters.is_none() {
+            return;
+        }
+        if self.messages_received + self.messages_sent >= METER_BATCH
+            || self.last_flush.elapsed() >= METER_INTERVAL
+        {
+            self.flush();
+        }
+    }
+
+    /// Publishes the counts accumulated so far.
+    fn flush(&mut self) {
+        use std::sync::atomic::Ordering::Relaxed;
+        self.last_flush = std::time::Instant::now();
+        let Some(c) = &self.counters else { return };
+        if self.messages_received + self.messages_sent == 0 {
+            return;
+        }
+        c.messages_received
+            .fetch_add(std::mem::take(&mut self.messages_received), Relaxed);
+        c.messages_sent
+            .fetch_add(std::mem::take(&mut self.messages_sent), Relaxed);
+        c.bytes_received
+            .fetch_add(std::mem::take(&mut self.bytes_received), Relaxed);
+        c.bytes_sent
+            .fetch_add(std::mem::take(&mut self.bytes_sent), Relaxed);
     }
 
     fn note(&self, e: WsEvent) {
@@ -479,14 +566,7 @@ impl SessionMeter {
 
 impl Drop for SessionMeter {
     fn drop(&mut self) {
-        use std::sync::atomic::Ordering::Relaxed;
-        if let Some(c) = &self.counters {
-            c.messages_received
-                .fetch_add(self.messages_received, Relaxed);
-            c.messages_sent.fetch_add(self.messages_sent, Relaxed);
-            c.bytes_received.fetch_add(self.bytes_received, Relaxed);
-            c.bytes_sent.fetch_add(self.bytes_sent, Relaxed);
-        }
+        self.flush();
     }
 }
 
@@ -907,6 +987,7 @@ impl WebSocketUpgrade {
             pong_timeout: Some(DEFAULT_PONG_TIMEOUT),
             idle_timeout: Some(DEFAULT_IDLE_TIMEOUT),
             write_timeout: Some(DEFAULT_WRITE_TIMEOUT),
+            stall_timeout: Some(DEFAULT_STALL_TIMEOUT),
             close_timeout: DEFAULT_CLOSE_TIMEOUT,
             queue_messages: MANAGED_QUEUE,
             max_outbound_message: DEFAULT_MAX_OUTBOUND,
@@ -1046,6 +1127,8 @@ const DEFAULT_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs
 /// flushed): 64 MiB still fits at about 9 Mbit/s.
 const DEFAULT_WRITE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 const DEFAULT_CLOSE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+/// Default bound on how long an inbound message may wait for the handler to take it.
+const DEFAULT_STALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 /// Default capacity (in messages) of each direction's queue between the handler and the
 /// I/O pump.
 const MANAGED_QUEUE: usize = 16;
@@ -1060,6 +1143,7 @@ pub struct ManagedUpgrade {
     pong_timeout: Option<std::time::Duration>,
     idle_timeout: Option<std::time::Duration>,
     write_timeout: Option<std::time::Duration>,
+    stall_timeout: Option<std::time::Duration>,
     close_timeout: std::time::Duration,
     queue_messages: usize,
     max_outbound_message: usize,
@@ -1169,6 +1253,32 @@ impl ManagedUpgrade {
         self
     }
 
+    /// Longest time an inbound message may wait for the handler to take it (default 60 s).
+    ///
+    /// When the handler stops calling `recv` (or a split [`ManagedReceiver`] is kept but
+    /// never read), the inbound queue fills and the pump stops reading the socket, which
+    /// pauses the idle and pong timers so a slow handler is not blamed on the peer. This
+    /// deadline is independent of those timers: once a message has waited this long, the
+    /// session is closed with `1013 Try Again Later`, counted in
+    /// [`WsStats::inbound_stalls`], and the handler gets `close_timeout` to return before it
+    /// is cancelled. Its session slot, connection slot, queues and buffers are then released,
+    /// so a stalled handler can never hold them indefinitely. Dropping the receiver instead
+    /// (the handler only sends) never stalls: inbound data is then discarded.
+    pub fn stall_timeout(mut self, d: std::time::Duration) -> Self {
+        self.stall_timeout = Some(d);
+        self
+    }
+
+    /// Disables the inbound stall deadline: a handler that stops reading then holds its
+    /// session until `max_lifetime`, shutdown or a heartbeat write failing after the peer
+    /// disconnected (the socket is not read while a message waits, so a disconnect is only
+    /// noticed when writing). Prefer a long [`stall_timeout`](Self::stall_timeout) over
+    /// disabling it.
+    pub fn no_stall_timeout(mut self) -> Self {
+        self.stall_timeout = None;
+        self
+    }
+
     /// How long to wait for the peer's close reply after sending a close frame (default
     /// 5 s).
     pub fn close_timeout(mut self, d: std::time::Duration) -> Self {
@@ -1225,6 +1335,7 @@ impl ManagedUpgrade {
             pong: self.pong_timeout.filter(|d| !d.is_zero()),
             idle: self.idle_timeout.filter(|d| !d.is_zero()),
             write: self.write_timeout.filter(|d| !d.is_zero()),
+            stall: self.stall_timeout.filter(|d| !d.is_zero()),
             close: self.close_timeout,
             lifetime: self.inner.max_lifetime.take(),
         };
@@ -1251,6 +1362,7 @@ impl ManagedUpgrade {
                 tx: OutboundTx {
                     tx: out_tx,
                     budget: budget.clone(),
+                    counters: counters.clone(),
                 },
                 stop: stop.clone(),
             };
@@ -1323,6 +1435,7 @@ struct OutBudget {
 struct OutboundTx {
     tx: tokio::sync::mpsc::Sender<Outbound>,
     budget: OutBudget,
+    counters: Option<std::sync::Arc<WsCounters>>,
 }
 
 fn closed_error() -> WsError {
@@ -1346,17 +1459,39 @@ impl OutboundTx {
                 // First come, first served across senders; fails once the pump has closed
                 // the budget. A wait cancelled here reserves nothing.
                 let n = u32::try_from(len).map_err(|_| closed_error())?;
-                let reserved = self
-                    .budget
-                    .bytes
-                    .clone()
-                    .acquire_many_owned(n)
-                    .await
-                    .map_err(|_| closed_error())?;
+                let reserved = match self.budget.bytes.clone().try_acquire_many_owned(n) {
+                    Ok(r) => r,
+                    Err(tokio::sync::TryAcquireError::Closed) => return Err(closed_error()),
+                    Err(tokio::sync::TryAcquireError::NoPermits) => {
+                        self.note_backpressure();
+                        self.budget
+                            .bytes
+                            .clone()
+                            .acquire_many_owned(n)
+                            .await
+                            .map_err(|_| closed_error())?
+                    }
+                };
                 Outbound::Message(m, reserved)
             }
         };
-        self.tx.send(out).await.map_err(|_| closed_error())
+        match self.tx.try_reserve() {
+            Ok(slot) => {
+                slot.send(out);
+                Ok(())
+            }
+            Err(tokio::sync::mpsc::error::TrySendError::Closed(())) => Err(closed_error()),
+            Err(tokio::sync::mpsc::error::TrySendError::Full(())) => {
+                self.note_backpressure();
+                self.tx.send(out).await.map_err(|_| closed_error())
+            }
+        }
+    }
+
+    fn note_backpressure(&self) {
+        if let Some(c) = &self.counters {
+            c.note(WsEvent::OutboundBackpressure);
+        }
     }
 
     async fn close(&self, frame: Option<tungstenite::protocol::CloseFrame>) {
@@ -1584,6 +1719,7 @@ struct PumpConfig {
     pong: Option<std::time::Duration>,
     idle: Option<std::time::Duration>,
     write: Option<std::time::Duration>,
+    stall: Option<std::time::Duration>,
     close: std::time::Duration,
     lifetime: Option<std::time::Duration>,
 }
@@ -1796,6 +1932,11 @@ async fn run_pump(ws: &mut RawSocket, io: Pump) {
         let idle_at = cfg.idle.map_or(far, |d| last_seen + d);
         let pong_at = challenge.as_ref().map_or(far, |c| c.deadline);
         let write_at = writing.as_ref().and_then(|w| w.deadline);
+        // Runs only while an inbound message waits for the handler, and is not paused by it.
+        let stall_at = match (pending.is_some(), cfg.stall) {
+            (true, Some(d)) => Some(paused_at + d),
+            _ => None,
+        };
         let (read, flush) = (pending.is_none(), writing.is_some());
         tokio::select! {
             biased;
@@ -1826,6 +1967,16 @@ async fn run_pump(ws: &mut RawSocket, io: Pump) {
                 }
                 break;
             }
+            _ = sleep_until(stall_at.unwrap_or(far)), if stall_at.is_some() => {
+                tracing::debug!("websocket handler did not take an inbound message in time");
+                meter.note(WsEvent::InboundStall);
+                // The peer is not at fault and may still be reading: tell it to retry later.
+                // With a write blocked, the close frame could not be delivered.
+                if writing.is_none() {
+                    close_session(ws, close_frame(CloseCode::Again, "server busy"), cfg.close).await;
+                }
+                break;
+            }
             _ = sleep_until(write_at.unwrap_or(far)), if write_at.is_some() => {
                 // The peer is not taking data: a close frame would queue behind the blocked
                 // bytes, so the connection is dropped without a handshake.
@@ -1834,6 +1985,8 @@ async fn run_pump(ws: &mut RawSocket, io: Pump) {
                 break;
             }
             _ = async { ping.as_mut().expect("guarded").tick().await }, if ping.is_some() => {
+                // Quiet sessions publish their counts at least once per heartbeat.
+                meter.flush();
                 // One challenge at a time: an unanswered one keeps its own deadline.
                 if challenge.is_some() {
                     continue;
@@ -1911,8 +2064,20 @@ async fn run_pump(ws: &mut RawSocket, io: Pump) {
                                 break;
                             }
                             Message::Text(_) | Message::Binary(_) if deliver => {
-                                pending = Some(m);
-                                paused_at = last_seen;
+                                // Hand it over at once when the queue has room; otherwise
+                                // stop reading until the handler takes it (backpressure).
+                                match in_tx.try_send(m) {
+                                    Ok(()) => {}
+                                    Err(tokio::sync::mpsc::error::TrySendError::Full(m)) => {
+                                        meter.note(WsEvent::InboundBackpressure);
+                                        pending = Some(m);
+                                        paused_at = last_seen;
+                                    }
+                                    // The handler dropped its receiver: discard data.
+                                    Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                                        deliver = false;
+                                    }
+                                }
                             }
                             // Only the pong echoing the outstanding challenge answers it;
                             // unsolicited and stale pongs are ignored (RFC 6455 §5.5.3).
@@ -1921,6 +2086,7 @@ async fn run_pump(ws: &mut RawSocket, io: Pump) {
                             {
                                 challenge = None;
                             }
+                            Message::Close(_) => meter.note(WsEvent::PeerClose),
                             // Pings are answered by tungstenite on the next read/write; a
                             // peer close is answered likewise and ends the stream next.
                             _ => {}
@@ -1967,12 +2133,14 @@ async fn run_pump(ws: &mut RawSocket, io: Pump) {
                         });
                     }
                     Some(Outbound::Close(frame)) => {
+                        meter.note(WsEvent::ServerClose);
                         let frame = sanitize_close(frame).or_else(|| close_frame(CloseCode::Normal, ""));
                         close_session(ws, frame, cfg.close).await;
                         break;
                     }
                     // The handler finished (or dropped the socket).
                     None => {
+                        meter.note(WsEvent::ServerClose);
                         close_session(ws, close_frame(CloseCode::Normal, ""), cfg.close).await;
                         break;
                     }
@@ -2083,9 +2251,11 @@ where
     /// Receives the next data message. Ping/pong are handled internally; `None` means the
     /// connection is closing: the peer closed it (its close frame has been answered), or the
     /// server began shutting down — in which case a close frame with code 1001 (Going Away)
-    /// has been sent. After invalid UTF-8, an oversized message or a protocol violation the
-    /// error is returned once, the session is failed with `1007`, `1009` or `1002`, and later
-    /// calls return `None`.
+    /// has been sent. A transport or protocol error is returned exactly once and ends the
+    /// stream: after invalid UTF-8, an oversized message or a protocol violation the session
+    /// is failed with `1007`, `1009` or `1002`; after an I/O error, a reset or an abrupt
+    /// disconnect nothing can be sent. Every later call returns `None`. Decode and
+    /// validation errors are not terminal: the session continues.
     pub async fn recv(&mut self) -> Option<Result<In, WsError>> {
         loop {
             if self.done {
@@ -2113,14 +2283,18 @@ where
             let msg = match next {
                 Ok(m) => m,
                 Err(e) => {
-                    if failure_code(&e).is_none() {
-                        self.meter.note(WsEvent::AbnormalDisconnect);
-                    }
+                    // Every read error is terminal for the stream: it is reported once and
+                    // later calls return `None`. Without this, a handler that skips errors
+                    // (`Err(_) => continue`) would poll a dead stream again and again,
+                    // getting the same or an `AlreadyClosed` error in a busy loop and
+                    // counting one abnormal disconnect per call.
+                    self.done = true;
                     if failure_code(&e).is_some() {
-                        // Fail the connection (1002/1007/1009); later calls return `None`.
+                        // Fail the connection (1002/1007/1009).
                         self.meter.note(WsEvent::ProtocolFailure);
                         fail_session(&mut self.raw, &e, DEFAULT_CLOSE_TIMEOUT).await;
-                        self.done = true;
+                    } else {
+                        self.meter.note(WsEvent::AbnormalDisconnect);
                     }
                     return Some(Err(e.into()));
                 }
@@ -2147,6 +2321,7 @@ where
                     // Tungstenite has queued the close reply; reading again flushes it and
                     // completes the closing handshake.
                     self.done = true;
+                    self.meter.note(WsEvent::PeerClose);
                     let _ = tokio::time::timeout(DEFAULT_CLOSE_TIMEOUT, async {
                         while let Some(Ok(_)) = self.raw.next().await {}
                     })
@@ -2271,6 +2446,7 @@ mod outbound_tests {
                 bytes: bytes.clone(),
                 max_message: max_message.min(budget),
             },
+            counters: None,
         };
         (out, rx, bytes)
     }
@@ -2418,5 +2594,62 @@ mod outbound_tests {
         drop(tx);
         assert_eq!(consumer.await.unwrap(), 8 * 50 * 10);
         assert_eq!(bytes.available_permits(), 30);
+    }
+}
+
+/// Property tests: handshake header validation never panics and accepts exactly what
+/// RFC 6455 allows.
+#[cfg(test)]
+mod handshake_prop_tests {
+    use super::{check_version, offered_protocols, valid_key};
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn keys_are_canonical_base64_of_16_bytes(bytes in prop::collection::vec(any::<u8>(), 0..40)) {
+            let ok = valid_key(&bytes);
+            if ok {
+                prop_assert_eq!(bytes.len(), 24);
+                prop_assert_eq!(data_encoding::BASE64.decode(&bytes).unwrap().len(), 16);
+            }
+        }
+
+        #[test]
+        fn every_16_byte_nonce_is_a_valid_key(nonce in prop::array::uniform16(any::<u8>())) {
+            let key = data_encoding::BASE64.encode(&nonce);
+            prop_assert!(valid_key(key.as_bytes()));
+        }
+
+        #[test]
+        fn version_and_protocol_headers_never_panic(
+            versions in prop::collection::vec("[ 0-9a-z,]{0,6}", 0..3),
+            protocols in prop::collection::vec("[ -~]{0,24}", 0..3),
+        ) {
+            let mut h = http::HeaderMap::new();
+            for v in &versions {
+                if let Ok(v) = http::HeaderValue::from_str(v) {
+                    h.append(http::header::SEC_WEBSOCKET_VERSION, v);
+                }
+            }
+            for p in &protocols {
+                if let Ok(p) = http::HeaderValue::from_str(p) {
+                    h.append(http::header::SEC_WEBSOCKET_PROTOCOL, p);
+                }
+            }
+            let version_ok = check_version(&h).is_ok();
+            let n = h.get_all(http::header::SEC_WEBSOCKET_VERSION).iter().count();
+            if version_ok {
+                prop_assert_eq!(n, 1);
+            }
+            if let Ok(list) = offered_protocols(&h) {
+                // Unique, non-empty tokens only.
+                let mut seen = std::collections::HashSet::new();
+                for p in &list {
+                    prop_assert!(!p.is_empty());
+                    prop_assert!(!p.contains([' ', ',', '\t', '"', '/']));
+                    prop_assert!(seen.insert(p.clone()));
+                }
+            }
+        }
     }
 }

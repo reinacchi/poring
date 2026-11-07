@@ -97,3 +97,10 @@ required-features = ["json"]
 name = "websocket_managed"
 path = "websocket_managed.rs"
 required-features = ["websocket"]
+
+[[example]]
+# Every production limit set explicitly: session caps, trusted proxies, origin policy,
+# message quotas, memory budget, timeouts and metrics.
+name = "websocket_production"
+path = "websocket_production.rs"
+required-features = ["json", "websocket"]

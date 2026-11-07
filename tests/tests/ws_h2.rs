@@ -892,3 +892,63 @@ async fn independent_nodejs_http2_client_interoperates() {
     assert!(stdout.contains("\"ok\":true"), "{stdout}");
     server.shutdown().await.unwrap();
 }
+
+/// Stress: 64 WebSockets multiplexed on one HTTP/2 connection, each driven concurrently
+/// from its own task alongside ordinary requests; half are cancelled mid-traffic (stream
+/// dropped without a close), half close cleanly. Every session must end, every permit must
+/// be released, nothing may panic, and the connection must keep serving afterwards.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn many_concurrent_http2_websockets_with_cancellation_release_everything() {
+    const STREAMS: usize = 64;
+    const ROUNDS: usize = 20;
+    let live = Live::default();
+    let server = lifecycle_server(live.clone(), Arc::default(), STREAMS).await;
+    let addr = server.local_addr();
+    let send = h2(addr).await;
+    let mut tasks = tokio::task::JoinSet::new();
+    for i in 0..STREAMS {
+        let mut send = send.clone();
+        tasks.spawn(async move {
+            let mut ws = open_ws(&mut send, addr, "/echo").await;
+            for round in 0..ROUNDS {
+                let payload = format!("s{i} r{round} {}", "x".repeat(i * 37 % 2048));
+                ws.send(Message::text(payload.clone())).await.unwrap();
+                match next_data(&mut ws).await {
+                    Message::Text(t) => assert_eq!(t.as_str(), payload),
+                    other => panic!("{other:?}"),
+                }
+                if round % 5 == 0 {
+                    assert_eq!(get(&mut send, addr, "/plain").await, (200, "plain".into()));
+                }
+                // Odd streams are cancelled half-way: in-flight message, no close frame.
+                if i % 2 == 1 && round == ROUNDS / 2 {
+                    ws.send(Message::text("in flight")).await.unwrap();
+                    drop(ws);
+                    return;
+                }
+            }
+            ws.close(None).await.unwrap();
+            while let Some(Ok(_)) = ws.next().await {}
+        });
+    }
+    while let Some(r) = tasks.join_next().await {
+        r.unwrap();
+    }
+    assert!(wait_for(|| live.live() == 0).await, "live={}", live.live());
+    assert!(wait_for(|| server.ws_stats().active_sessions == 0).await);
+    let stats = server.ws_stats();
+    assert_eq!(stats.handshakes_accepted, STREAMS as u64, "{stats:?}");
+    assert_eq!(stats.sessions_ended, STREAMS as u64, "{stats:?}");
+    assert_eq!(stats.sessions_panicked, 0, "{stats:?}");
+    assert_eq!(stats.rejected_session_limit, 0, "{stats:?}");
+    // Every permit is back: the full session limit can be used again on the same connection.
+    let mut send = send;
+    let mut again = Vec::new();
+    for _ in 0..STREAMS {
+        again.push(open_ws(&mut send, addr, "/echo").await);
+    }
+    assert!(wait_for(|| live.live() == STREAMS).await);
+    drop(again);
+    assert!(wait_for(|| live.live() == 0).await);
+    server.shutdown().await.unwrap();
+}

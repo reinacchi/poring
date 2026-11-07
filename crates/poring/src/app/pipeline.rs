@@ -388,6 +388,10 @@ impl<A: AppSpec> AppInner<A> {
                     .unwrap_or(&self.ws_origins),
                 &self.proxies,
                 cx.peer.map(|p| p.ip()),
+                cx.parts
+                    .extensions
+                    .get::<crate::policy::ws_origin::SecureTransport>()
+                    .is_some(),
             )
     }
 

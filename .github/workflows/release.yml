@@ -1,0 +1,55 @@
+name: release
+# Release gate. A `v*` tag (or a manual run naming one) must pass the complete verification
+# (`scripts/verify-ci.sh release`: the PR checks, the heavy suite and the security audit)
+# before the publish job can start. Publishing additionally waits for approval on the
+# `crates-io` environment (Settings > Environments: add required reviewers and the
+# CARGO_REGISTRY_TOKEN secret there, not at repository level).
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to verify and publish (e.g. v0.2.0)"
+        required: true
+permissions:
+  contents: read
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+
+jobs:
+  verify:
+    name: verify-ci release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { ref: "${{ inputs.tag || github.ref }}" }
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
+        with:
+          toolchain: "1.97.0"
+          components: "rustfmt, clippy"
+          targets: "wasm32-unknown-unknown"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with: { node-version: 22 }
+      - run: npm install -g typescript@7.0.2
+      - run: cargo install --locked cargo-audit
+      # Not --fail-fast: the log lists every failing command at once.
+      - run: RUST_TOOLCHAIN=1.97.0 bash scripts/verify-ci.sh release
+
+  publish:
+    needs: [verify]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: crates-io
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { ref: "${{ inputs.tag || github.ref }}" }
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
+        with: { toolchain: "1.97.0" }
+      # Macros first: `poring` depends on the published `poring-macros` version.
+      - run: cargo publish --locked -p poring-macros
+        env: { CARGO_REGISTRY_TOKEN: "${{ secrets.CARGO_REGISTRY_TOKEN }}" }
+      - run: cargo publish --locked -p poring
+        env: { CARGO_REGISTRY_TOKEN: "${{ secrets.CARGO_REGISTRY_TOKEN }}" }
