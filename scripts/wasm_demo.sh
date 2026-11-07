@@ -4,8 +4,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 cargo build -q -p poring --features cli --bin cargo-poring
-BIN=target/debug/cargo-poring
-WORK=$(mktemp -d); trap 'kill $HOST 2>/dev/null || true; rm -rf "$WORK"' EXIT
+BIN="${CARGO_TARGET_DIR:-target}/debug/cargo-poring"
+HOST=""
+WORK=$(mktemp -d); trap '[[ -n "$HOST" ]] && kill "$HOST" 2>/dev/null; rm -rf "$WORK"' EXIT
 PORT=${PORT:-3920}
 $BIN poring wasm new-echo --name demo --version 1 -o "$WORK/guest.wat" >/dev/null
 $BIN poring dev --wasm "$WORK/guest.wat" --addr 127.0.0.1:$PORT 2>"$WORK/host.log" &

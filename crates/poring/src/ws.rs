@@ -15,8 +15,11 @@
 //!
 //! * Inbound frames are size-limited (`max_message_size`, default 64 KiB), parsed as JSON
 //!   and validated with the type's `PoringSchema` rules before the handler sees them.
-//! * `send` awaits the socket flush with a bounded write buffer, so a slow reader applies
-//!   backpressure to the producer instead of growing memory.
+//! * Outbound data is bounded: raw and typed sockets' `send` awaits the socket flush with a
+//!   bounded write buffer, and managed sessions bound their outbound queue by messages and
+//!   bytes, so a slow reader applies backpressure to the producer instead of growing memory.
+//!   In managed sessions a blocked write never stalls reading, heartbeats, timeouts or
+//!   shutdown (see [`ManagedUpgrade::write_timeout`]).
 //! * The upgrade request itself goes through the normal policy pipeline (auth, rate
 //!   limits) before `on_upgrade` runs. Handshakes carrying an `Origin` header must be
 //!   same-origin or listed explicitly in the app's CORS origins (the `*` wildcard does not
@@ -346,6 +349,9 @@ pub struct WsStats {
     /// Managed sessions closed because a heartbeat ping was not answered with the matching
     /// pong within `pong_timeout`.
     pub heartbeat_timeouts: u64,
+    /// Managed sessions ended because an outbound message could not be written within
+    /// `write_timeout` (a peer that stopped reading).
+    pub write_timeouts: u64,
 }
 
 /// Rare session events counted directly.
@@ -365,13 +371,14 @@ pub(crate) enum WsEvent {
     ShutdownClose,
     AbnormalDisconnect,
     HeartbeatTimeout,
+    WriteTimeout,
 }
 
 /// App-wide WebSocket counters: relaxed atomics, touched on handshakes, session start/end
 /// and rare events only (per-message counts are accumulated per session).
 #[derive(Debug, Default)]
 pub(crate) struct WsCounters {
-    events: [std::sync::atomic::AtomicU64; 14],
+    events: [std::sync::atomic::AtomicU64; 15],
     active: std::sync::atomic::AtomicU64,
     ended: std::sync::atomic::AtomicU64,
     messages_received: std::sync::atomic::AtomicU64,
@@ -412,6 +419,7 @@ impl WsCounters {
             shutdown_closes: self.event(WsEvent::ShutdownClose),
             abnormal_disconnects: self.event(WsEvent::AbnormalDisconnect),
             heartbeat_timeouts: self.event(WsEvent::HeartbeatTimeout),
+            write_timeouts: self.event(WsEvent::WriteTimeout),
         }
     }
 }
@@ -898,6 +906,7 @@ impl WebSocketUpgrade {
             ping_interval: Some(DEFAULT_PING_INTERVAL),
             pong_timeout: Some(DEFAULT_PONG_TIMEOUT),
             idle_timeout: Some(DEFAULT_IDLE_TIMEOUT),
+            write_timeout: Some(DEFAULT_WRITE_TIMEOUT),
             close_timeout: DEFAULT_CLOSE_TIMEOUT,
             queue_messages: MANAGED_QUEUE,
             max_outbound_message: DEFAULT_MAX_OUTBOUND,
@@ -1033,6 +1042,9 @@ const DEFAULT_PONG_TIMEOUT: std::time::Duration = std::time::Duration::from_secs
 /// default peer accepts inbound.
 const DEFAULT_MAX_OUTBOUND: usize = 64 << 20;
 const DEFAULT_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(75);
+/// Default bound on writing one outbound message (from handing it to the socket until it is
+/// flushed): 64 MiB still fits at about 9 Mbit/s.
+const DEFAULT_WRITE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 const DEFAULT_CLOSE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 /// Default capacity (in messages) of each direction's queue between the handler and the
 /// I/O pump.
@@ -1047,6 +1059,7 @@ pub struct ManagedUpgrade {
     ping_interval: Option<std::time::Duration>,
     pong_timeout: Option<std::time::Duration>,
     idle_timeout: Option<std::time::Duration>,
+    write_timeout: Option<std::time::Duration>,
     close_timeout: std::time::Duration,
     queue_messages: usize,
     max_outbound_message: usize,
@@ -1072,7 +1085,9 @@ impl ManagedUpgrade {
     /// data messages, pings and unsolicited or stale pongs do not. At most one challenge is
     /// outstanding, so a tick that finds one still unanswered sends no new ping. When the
     /// deadline passes the session is closed with `1001` (waiting for the unresponsive
-    /// peer's close reply at most `min(pong_timeout, close_timeout)`) and counted in
+    /// peer's close reply at most `min(pong_timeout, close_timeout)`; if an outbound write
+    /// is blocked, the close frame could not be delivered and the connection is dropped at
+    /// once) and counted in
     /// [`WsStats::heartbeat_timeouts`]. While the handler is not taking inbound messages
     /// (and the pump therefore does not read the socket) the deadline is paused, so a slow
     /// handler never causes a heartbeat failure.
@@ -1120,8 +1135,9 @@ impl ManagedUpgrade {
 
     /// Closes the session (`1001`) when nothing at all — data, ping, pong or close — has
     /// been received from the peer for this long (default 75 s). Time spent waiting for
-    /// the handler to take an inbound message does not count. A write that cannot make
-    /// progress for this long also ends the session.
+    /// the handler to take an inbound message does not count. The socket keeps being read
+    /// while an outbound write is blocked, so a peer that stops reading is still subject to
+    /// this timeout.
     pub fn idle_timeout(mut self, d: std::time::Duration) -> Self {
         self.idle_timeout = Some(d);
         self
@@ -1130,6 +1146,26 @@ impl ManagedUpgrade {
     /// Disables the idle timeout.
     pub fn no_idle_timeout(mut self) -> Self {
         self.idle_timeout = None;
+        self
+    }
+
+    /// Longest time one outbound message may take to be written to the socket, from when
+    /// the pump hands it to the transport until it is flushed (default 60 s). A peer that
+    /// stops reading eventually blocks writes (once the TCP or HTTP/2 flow-control windows
+    /// are full); when this deadline passes the session ends without a close handshake (a
+    /// close frame could not be delivered either), counted in
+    /// [`WsStats::write_timeouts`]. Independently of this setting, a blocked write never
+    /// delays heartbeat, idle, lifetime or shutdown handling: the pump keeps reading and
+    /// keeps its timers running while a write is in progress.
+    pub fn write_timeout(mut self, d: std::time::Duration) -> Self {
+        self.write_timeout = Some(d);
+        self
+    }
+
+    /// Disables the write timeout: a blocked write then ends only through the heartbeat,
+    /// idle timeout, `max_lifetime`, shutdown or the peer disconnecting.
+    pub fn no_write_timeout(mut self) -> Self {
+        self.write_timeout = None;
         self
     }
 
@@ -1188,6 +1224,7 @@ impl ManagedUpgrade {
             ping: self.ping_interval.filter(|d| !d.is_zero()),
             pong: self.pong_timeout.filter(|d| !d.is_zero()),
             idle: self.idle_timeout.filter(|d| !d.is_zero()),
+            write: self.write_timeout.filter(|d| !d.is_zero()),
             close: self.close_timeout,
             lifetime: self.inner.max_lifetime.take(),
         };
@@ -1334,6 +1371,10 @@ impl OutboundTx {
 /// * pings are sent every `ping_interval`, and a ping whose matching pong does not arrive
 ///   within `pong_timeout` closes the session with `1001`;
 /// * a peer that sends nothing for `idle_timeout` is closed with `1001`;
+/// * one outbound message that cannot be written within `write_timeout` ends the session;
+///   reading, heartbeats, timeouts and shutdown keep working while a write is blocked
+///   (idle and heartbeat timeouts then drop the connection without a close frame, which
+///   could not reach a peer that is not reading);
 /// * `max_lifetime` and server shutdown close the session with `1001`;
 /// * when the handler returns or drops the socket, the session closes with `1000`;
 /// * every close waits at most `close_timeout` for the peer's reply.
@@ -1542,6 +1583,7 @@ struct PumpConfig {
     ping: Option<std::time::Duration>,
     pong: Option<std::time::Duration>,
     idle: Option<std::time::Duration>,
+    write: Option<std::time::Duration>,
     close: std::time::Duration,
     lifetime: Option<std::time::Duration>,
 }
@@ -1669,6 +1711,52 @@ async fn pump(mut ws: RawSocket, io: Pump) {
     // Dropping `in_tx` (in `io`) made `ManagedSocket::recv` return `None`.
 }
 
+/// An outbound write in progress: the frame was handed to the socket and is being flushed.
+struct Writing {
+    /// The written data message's byte-budget reservation (none for a heartbeat ping),
+    /// returned when the flush completes or the session ends.
+    _reserved: Option<tokio::sync::OwnedSemaphorePermit>,
+    /// `write_timeout` deadline, if enabled.
+    deadline: Option<tokio::time::Instant>,
+}
+
+/// One socket event (see [`socket_event`]).
+enum SocketEvent {
+    Read(Option<Result<Message, tungstenite::Error>>),
+    Flushed(Result<(), tungstenite::Error>),
+}
+
+/// The next socket event: an inbound message (when `read`) or the completion of the
+/// current flush (when `flush`). Both directions progress concurrently on the one socket:
+/// tokio-tungstenite keeps separate read and write wakers, and tungstenite keeps reading
+/// (and retries its own pong and close replies later) while a write would block. So a peer
+/// that stops reading never stops the pump from reading, or from running its timers.
+fn socket_event(
+    ws: &mut RawSocket,
+    read: bool,
+    flush: bool,
+) -> impl Future<Output = SocketEvent> + '_ {
+    use futures_util::{Sink, Stream};
+    use std::pin::Pin;
+    use std::task::Poll;
+    std::future::poll_fn(move |cx| {
+        if flush && let Poll::Ready(r) = Pin::new(&mut *ws).poll_flush(cx) {
+            return Poll::Ready(SocketEvent::Flushed(r));
+        }
+        if read && let Poll::Ready(m) = Pin::new(&mut *ws).poll_next(cx) {
+            return Poll::Ready(SocketEvent::Read(m));
+        }
+        Poll::Pending
+    })
+}
+
+/// Hands one frame to the socket without waiting for it to be written; the caller then
+/// drives the flush through [`socket_event`]. A frame that cannot be written at once stays
+/// in tungstenite's bounded write buffer (`max_write_buffer`).
+fn start_write(ws: &mut RawSocket, m: Message) -> Result<(), tungstenite::Error> {
+    futures_util::Sink::start_send(std::pin::Pin::new(ws), m)
+}
+
 async fn run_pump(ws: &mut RawSocket, io: Pump) {
     use tokio::time::{Instant, sleep_until};
     use tungstenite::protocol::frame::coding::CloseCode;
@@ -1700,11 +1788,15 @@ async fn run_pump(ws: &mut RawSocket, io: Pump) {
     let mut paused_at = start;
     let mut deliver = true;
     let mut handler_watch = true;
-    let write_bound = cfg.idle;
+    // At most one outbound data message is in flight; the next is taken from the queue
+    // once it is flushed. Reading and every timer keep running meanwhile.
+    let mut writing: Option<Writing> = None;
 
     loop {
         let idle_at = cfg.idle.map_or(far, |d| last_seen + d);
         let pong_at = challenge.as_ref().map_or(far, |c| c.deadline);
+        let write_at = writing.as_ref().and_then(|w| w.deadline);
+        let (read, flush) = (pending.is_none(), writing.is_some());
         tokio::select! {
             biased;
             _ = stop.wait() => {
@@ -1727,7 +1819,18 @@ async fn run_pump(ws: &mut RawSocket, io: Pump) {
             _ = sleep_until(idle_at), if cfg.idle.is_some() && pending.is_none() => {
                 tracing::debug!("websocket session idle timeout");
                 meter.note(WsEvent::IdleTimeout);
-                close_session(ws, close_frame(CloseCode::Away, "idle timeout"), cfg.close).await;
+                // A peer that neither sends nor takes data cannot receive a close frame
+                // queued behind the blocked write: drop the connection instead of waiting.
+                if writing.is_none() {
+                    close_session(ws, close_frame(CloseCode::Away, "idle timeout"), cfg.close).await;
+                }
+                break;
+            }
+            _ = sleep_until(write_at.unwrap_or(far)), if write_at.is_some() => {
+                // The peer is not taking data: a close frame would queue behind the blocked
+                // bytes, so the connection is dropped without a handshake.
+                tracing::debug!("websocket write did not complete in time");
+                meter.note(WsEvent::WriteTimeout);
                 break;
             }
             _ = async { ping.as_mut().expect("guarded").tick().await }, if ping.is_some() => {
@@ -1737,18 +1840,26 @@ async fn run_pump(ws: &mut RawSocket, io: Pump) {
                 }
                 ping_seq = ping_seq.wrapping_add(1);
                 let payload = ping_seq.to_be_bytes();
-                let sent = ws.send(Message::Ping(bytes::Bytes::copy_from_slice(&payload)));
-                let ok = match write_bound {
-                    Some(b) => matches!(tokio::time::timeout(b, sent).await, Ok(Ok(()))),
-                    None => sent.await.is_ok(),
-                };
-                if !ok {
-                    break;
+                // Queued behind a write in progress, if any: the peer must read what was
+                // sent before it to answer, so an unread backlog fails the heartbeat too.
+                match start_write(ws, Message::Ping(bytes::Bytes::copy_from_slice(&payload))) {
+                    Ok(()) => {}
+                    // The write buffer is full of unread data: skip this tick (the write
+                    // timeout and any outstanding deadline still apply).
+                    Err(tungstenite::Error::WriteBufferFull(_)) => continue,
+                    Err(_) => break,
+                }
+                let now = Instant::now();
+                if writing.is_none() {
+                    writing = Some(Writing {
+                        _reserved: None,
+                        deadline: cfg.write.map(|d| now + d),
+                    });
                 }
                 if let Some(t) = cfg.pong {
                     challenge = Some(Challenge {
                         payload,
-                        deadline: Instant::now() + t,
+                        deadline: now + t,
                     });
                 }
             }
@@ -1769,7 +1880,19 @@ async fn run_pump(ws: &mut RawSocket, io: Pump) {
                 }
                 last_seen = now;
             }
-            msg = ws.next(), if pending.is_none() => {
+            ev = socket_event(ws, read, flush), if read || flush => {
+                let msg = match ev {
+                    // Written: the bytes are no longer queued.
+                    SocketEvent::Flushed(Ok(())) => {
+                        writing = None;
+                        continue;
+                    }
+                    SocketEvent::Flushed(Err(_)) => {
+                        tracing::debug!("websocket session ended by a write error");
+                        break;
+                    }
+                    SocketEvent::Read(msg) => msg,
+                };
                 match msg {
                     Some(Ok(m)) => {
                         last_seen = Instant::now();
@@ -1822,26 +1945,26 @@ async fn run_pump(ws: &mut RawSocket, io: Pump) {
                 // The peer stopped answering: its close reply is waited for (while its
                 // input is drained, so the close frame is not lost to a TCP reset) no
                 // longer than it was given for the pong.
-                let bound = cfg.pong.map_or(cfg.close, |p| p.min(cfg.close));
-                close_session(ws, close_frame(CloseCode::Away, "heartbeat timeout"), bound).await;
+                // With a write blocked, the close frame could not reach it at all.
+                if writing.is_none() {
+                    let bound = cfg.pong.map_or(cfg.close, |p| p.min(cfg.close));
+                    close_session(ws, close_frame(CloseCode::Away, "heartbeat timeout"), bound).await;
+                }
                 break;
             }
-            out = out_rx.recv() => {
+            out = out_rx.recv(), if writing.is_none() => {
                 match out {
                     Some(Outbound::Message(m, reserved)) => {
                         if matches!(m, Message::Text(_) | Message::Binary(_)) {
                             meter.sent(&m);
                         }
-                        let sent = ws.send(m);
-                        let ok = match write_bound {
-                            Some(b) => matches!(tokio::time::timeout(b, sent).await, Ok(Ok(()))),
-                            None => sent.await.is_ok(),
-                        };
-                        // Written (or failed): the bytes are no longer queued.
-                        drop(reserved);
-                        if !ok {
+                        if start_write(ws, m).is_err() {
                             break;
                         }
+                        writing = Some(Writing {
+                            _reserved: Some(reserved),
+                            deadline: cfg.write.map(|d| Instant::now() + d),
+                        });
                     }
                     Some(Outbound::Close(frame)) => {
                         let frame = sanitize_close(frame).or_else(|| close_frame(CloseCode::Normal, ""));

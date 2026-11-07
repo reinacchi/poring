@@ -991,6 +991,33 @@ async fn invalid_close_frames_from_the_peer_fail_with_protocol_error() {
 }
 
 #[tokio::test]
+async fn reserved_bits_unknown_opcodes_and_unmasked_frames_fail_with_1002() {
+    let server = serve_close_endpoints(Arc::new(AtomicUsize::new(0))).await;
+    let addr = server.local_addr();
+    for path in ["/m", "/t"] {
+        // RSV1 without a negotiated extension (RFC 6455 §5.2).
+        let got = close_after(addr, path, &[(0xC1, b"hi".to_vec())]).await;
+        assert_eq!(got, 1002, "{path}: RSV1 set");
+        // Reserved data and control opcodes.
+        let got = close_after(addr, path, &[(0x83, b"hi".to_vec())]).await;
+        assert_eq!(got, 1002, "{path}: opcode 0x3");
+        let got = close_after(addr, path, &[(0x8B, Vec::new())]).await;
+        assert_eq!(got, 1002, "{path}: opcode 0xB");
+        // A client frame without the mask bit (RFC 6455 §5.1).
+        let mut tcp = raw_ws(addr, path).await;
+        tcp.write_all(&[0x81, 0x02, b'h', b'i']).await.unwrap();
+        let (data, close) = read_until_close(&mut tcp).await;
+        assert!(data.is_empty(), "{path}: unmasked data was delivered");
+        assert_eq!(
+            code_of(&close.expect("close frame")),
+            1002,
+            "{path}: unmasked frame"
+        );
+    }
+    server.shutdown().await.unwrap();
+}
+
+#[tokio::test]
 async fn invalid_utf8_text_fails_with_1007_and_fragments_are_reassembled() {
     let ended = Arc::new(AtomicUsize::new(0));
     let server = serve_close_endpoints(ended.clone()).await;

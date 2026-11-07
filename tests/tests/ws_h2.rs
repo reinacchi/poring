@@ -747,6 +747,122 @@ async fn shutdown_closes_open_http2_websockets_with_going_away() {
     assert_eq!(live.live(), 0);
 }
 
+/// `/stall-hb`: heartbeat only; `/stall`: no timers at all. Both flood a client that never
+/// reads, so the server's writes block on HTTP/2 stream flow control.
+async fn stall_server(live: Live) -> poring::Server {
+    let (l1, l2, l3) = (live.clone(), live.clone(), live);
+    let flood = |live: Live| {
+        move |mut sock: ManagedSocket| async move {
+            let _g = live.enter();
+            let chunk = vec![1u8; 16 * 1024];
+            while sock.send(Message::binary(chunk.clone())).await.is_ok() {}
+        }
+    };
+    Poring::new()
+        .limits(poring::Limits {
+            shutdown_grace: Duration::from_secs(1),
+            ..Default::default()
+        })
+        .get("/stall-hb", move |ws: WebSocketUpgrade| {
+            let live = l1.clone();
+            async move {
+                ws.managed()
+                    .no_idle_timeout()
+                    .ping_interval(Duration::from_millis(100))
+                    .pong_timeout(Duration::from_millis(300))
+                    .close_timeout(Duration::from_millis(200))
+                    .on_upgrade(flood(live))
+            }
+        })
+        .get("/stall", move |ws: WebSocketUpgrade| {
+            let live = l2.clone();
+            async move {
+                ws.managed()
+                    .no_idle_timeout()
+                    .no_ping()
+                    .no_write_timeout()
+                    .close_timeout(Duration::from_millis(200))
+                    .on_upgrade(flood(live))
+            }
+        })
+        .get("/echo", move |ws: WebSocketUpgrade| {
+            let live = l3.clone();
+            async move {
+                ws.managed()
+                    .on_upgrade(move |mut sock: ManagedSocket| async move {
+                        let _g = live.enter();
+                        while let Some(m) = sock.recv().await {
+                            if sock.send(m).await.is_err() {
+                                break;
+                            }
+                        }
+                    })
+            }
+        })
+        .build()
+        .unwrap()
+        .bind("127.0.0.1:0")
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn heartbeat_ends_a_stalled_http2_websocket_and_spares_its_neighbours() {
+    let live = Live::default();
+    let server = stall_server(live.clone()).await;
+    let addr = server.local_addr();
+    let mut send = h2(addr).await;
+    let mut echo = open_ws(&mut send, addr, "/echo").await;
+    let _stalled = open_ws(&mut send, addr, "/stall-hb").await;
+    assert!(wait_for(|| live.live() == 2).await);
+    // The stalled stream never reads (nor answers pings): its heartbeat ends it ...
+    assert!(
+        wait_for(|| server.ws_stats().heartbeat_timeouts == 1).await,
+        "heartbeat not enforced on a blocked HTTP/2 stream"
+    );
+    assert!(wait_for(|| live.live() == 1).await);
+    // ... while the other stream on the same connection is unaffected.
+    echo.send(Message::text("alive")).await.unwrap();
+    assert_eq!(next_data(&mut echo).await, Message::text("alive"));
+    drop(echo);
+    assert!(wait_for(|| live.live() == 0).await);
+    server.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_blocked_http2_websocket_write_ends_its_session_promptly_at_shutdown() {
+    let live = Live::default();
+    let server = stall_server(live.clone()).await;
+    let addr = server.local_addr();
+    let mut send = h2(addr).await;
+    let _stalled = open_ws(&mut send, addr, "/stall").await;
+    assert!(wait_for(|| live.live() == 1).await);
+    // Let the writes block on flow control.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let started = std::time::Instant::now();
+    let shutdown = tokio::spawn(server.shutdown());
+    // The session (handler, permits, queues) ends at once, blocked write or not.
+    assert!(wait_for(|| live.live() == 0).await);
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "{:?}",
+        started.elapsed()
+    );
+    // hyper keeps the HTTP/2 stream's internal send task waiting for the window this
+    // client never grants, so the connection itself only closes when the grace period
+    // (1 s here) ends and it is cancelled: bounded, never indefinite.
+    tokio::time::timeout(Duration::from_secs(5), shutdown)
+        .await
+        .expect("shutdown is bounded by the grace period")
+        .unwrap()
+        .unwrap();
+    assert!(
+        started.elapsed() < Duration::from_secs(3),
+        "{:?}",
+        started.elapsed()
+    );
+}
+
 // ---- P4.5: independent client interoperability (Node.js http2 / nghttp2) -------------
 
 /// Runs `tests/interop/h2_ws_client.mjs` against a Poring server. Requires Node.js >= 18

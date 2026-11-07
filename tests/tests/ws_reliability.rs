@@ -619,7 +619,16 @@ async fn a_raw_client_echoing_the_challenge_stays_connected() {
     }
     assert!(pings >= 3, "challenges keep coming: {pings}");
     raw.send(TEXT, b"still here").await;
-    let f = raw.next(BOUND).await.unwrap();
+    // Pings keep coming every 100 ms and may arrive before the echo: keep answering them.
+    let f = loop {
+        let f = raw.next(BOUND).await.expect("echo");
+        assert_ne!(f.opcode, CLOSE, "closed although every ping was answered");
+        if f.opcode == PING {
+            raw.send(PONG, &f.payload).await;
+            continue;
+        }
+        break f;
+    };
     assert_eq!((f.opcode, f.payload.as_slice()), (TEXT, &b"still here"[..]));
     assert_eq!(server.ws_stats().heartbeat_timeouts, 0);
     server.shutdown().await.unwrap();
@@ -861,4 +870,383 @@ async fn a_slow_client_stalls_the_sender_and_a_vanished_one_releases_it() {
     drop(ws);
     eventually("released", || server.ws_stats().active_sessions == 0).await;
     server.shutdown().await.unwrap();
+}
+
+// ---------------------------------------------------------------------------------------
+// Blocked outbound writes: a client that completes the handshake and then stops reading
+
+/// What a flooding handler managed to queue, and whether it is still running.
+#[derive(Clone, Default)]
+struct Stall {
+    queued: Arc<AtomicUsize>,
+    started: Arc<AtomicUsize>,
+    dropped: Arc<AtomicUsize>,
+}
+
+/// Sends 64 KiB binary messages until `send` fails (or `limit` messages were sent).
+async fn flood(mut sock: ManagedSocket, s: Stall, limit: usize) {
+    s.started.fetch_add(1, Ordering::SeqCst);
+    let _guard = DropGuard(s.dropped.clone());
+    for _ in 0..limit {
+        if sock
+            .send(Message::binary(vec![7u8; 64 * 1024]))
+            .await
+            .is_err()
+        {
+            return;
+        }
+        s.queued.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+async fn stall_server(s: Stall, limits: poring::Limits) -> poring::Server {
+    let (a, b, c, d) = (s.clone(), s.clone(), s.clone(), s.clone());
+    Poring::new()
+        .limits(limits)
+        // No idle timeout, no heartbeat: only shutdown (or the peer) ends the session.
+        .ws("/no-timers", move |ws: WebSocketUpgrade| {
+            let s = a.clone();
+            async move {
+                ws.managed()
+                    .no_idle_timeout()
+                    .no_ping()
+                    .queue_messages(4)
+                    .max_queued_bytes(256 * 1024)
+                    .close_timeout(Duration::from_millis(200))
+                    .on_upgrade(move |sock| flood(sock, s, usize::MAX))
+            }
+        })
+        // Heartbeat only (no idle timeout): an unanswered ping must end the session even
+        // while a data write is blocked.
+        .ws("/heartbeat", move |ws: WebSocketUpgrade| {
+            let s = b.clone();
+            async move {
+                ws.managed()
+                    .no_idle_timeout()
+                    .ping_interval(Duration::from_millis(100))
+                    .pong_timeout(Duration::from_millis(300))
+                    .queue_messages(4)
+                    .max_queued_bytes(256 * 1024)
+                    .close_timeout(Duration::from_millis(200))
+                    .on_upgrade(move |sock| flood(sock, s, usize::MAX))
+            }
+        })
+        // Idle timeout only.
+        .ws("/idle", move |ws: WebSocketUpgrade| {
+            let s = c.clone();
+            async move {
+                ws.managed()
+                    .idle_timeout(Duration::from_millis(300))
+                    .no_ping()
+                    .queue_messages(4)
+                    .max_queued_bytes(256 * 1024)
+                    .close_timeout(Duration::from_millis(200))
+                    .on_upgrade(move |sock| flood(sock, s, usize::MAX))
+            }
+        })
+        // A bounded burst that a reading client receives in full.
+        .ws("/burst", move |ws: WebSocketUpgrade| {
+            let s = d.clone();
+            async move {
+                ws.managed()
+                    .no_idle_timeout()
+                    .ping_interval(Duration::from_millis(50))
+                    .pong_timeout(Duration::from_millis(300))
+                    .queue_messages(4)
+                    .max_queued_bytes(256 * 1024)
+                    .on_upgrade(move |sock| flood(sock, s, 256))
+            }
+        })
+        .build()
+        .unwrap()
+        .bind("127.0.0.1:0")
+        .await
+        .unwrap()
+}
+
+/// Waits until the flooding handler stops making progress (its writes are blocked).
+async fn until_stalled(s: &Stall) -> usize {
+    let start = Instant::now();
+    let mut last = usize::MAX;
+    loop {
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        let now = Probe::get(&s.queued);
+        if now == last && now > 0 {
+            return now;
+        }
+        last = now;
+        assert!(start.elapsed() < BOUND, "the writer never stalled");
+    }
+}
+
+#[tokio::test]
+async fn shutdown_is_not_held_up_by_a_blocked_write() {
+    let s = Stall::default();
+    let server = stall_server(
+        s.clone(),
+        poring::Limits {
+            // Far longer than the test bound: shutdown must not need it.
+            shutdown_grace: Duration::from_secs(30),
+            ..Default::default()
+        },
+    )
+    .await;
+    let addr = server.local_addr();
+    let _raw = Raw::connect(addr, "/no-timers").await;
+    let queued = until_stalled(&s).await;
+    assert!(queued < 1024, "backpressure bounded the sender ({queued})");
+    let start = Instant::now();
+    tokio::time::timeout(BOUND, server.shutdown())
+        .await
+        .expect("shutdown did not wait for the blocked write")
+        .unwrap();
+    assert!(
+        start.elapsed() < Duration::from_secs(2),
+        "{:?}",
+        start.elapsed()
+    );
+    assert_eq!(Probe::get(&s.dropped), 1, "handler finished or cancelled");
+}
+
+#[tokio::test]
+async fn heartbeat_is_enforced_while_a_write_is_blocked() {
+    let s = Stall::default();
+    let server = stall_server(s.clone(), poring::Limits::default()).await;
+    let addr = server.local_addr();
+    let _raw = Raw::connect(addr, "/heartbeat").await;
+    eventually("heartbeat timeout counted", || {
+        server.ws_stats().heartbeat_timeouts == 1
+    })
+    .await;
+    eventually("session released", || {
+        server.ws_stats().active_sessions == 0
+    })
+    .await;
+    eventually("handler ended", || Probe::get(&s.dropped) == 1).await;
+    server.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn idle_timeout_is_enforced_while_a_write_is_blocked() {
+    let s = Stall::default();
+    let server = stall_server(s.clone(), poring::Limits::default()).await;
+    let addr = server.local_addr();
+    let _raw = Raw::connect(addr, "/idle").await;
+    eventually("idle timeout counted", || {
+        server.ws_stats().idle_timeouts == 1
+    })
+    .await;
+    eventually("session released", || {
+        server.ws_stats().active_sessions == 0
+    })
+    .await;
+    server.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_client_vanishing_during_a_blocked_write_releases_the_session() {
+    let s = Stall::default();
+    let server = stall_server(s.clone(), poring::Limits::default()).await;
+    let addr = server.local_addr();
+    let raw = Raw::connect(addr, "/no-timers").await;
+    until_stalled(&s).await;
+    drop(raw);
+    eventually("session released", || {
+        server.ws_stats().active_sessions == 0
+    })
+    .await;
+    eventually("handler ended", || Probe::get(&s.dropped) == 1).await;
+    server.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_reading_client_receives_every_message() {
+    let s = Stall::default();
+    let server = stall_server(s.clone(), poring::Limits::default()).await;
+    let addr = server.local_addr();
+    let mut ws = client(addr, "/burst").await;
+    let mut got = 0;
+    while got < 256 {
+        match tokio::time::timeout(BOUND, ws.next()).await.unwrap() {
+            Some(Ok(Message::Binary(b))) => {
+                assert_eq!(b.len(), 64 * 1024);
+                got += 1;
+            }
+            Some(Ok(Message::Ping(_) | Message::Pong(_))) => {}
+            other => panic!("after {got} messages: {other:?}"),
+        }
+    }
+    // The handler returned: the session closes normally.
+    loop {
+        match tokio::time::timeout(BOUND, ws.next()).await.unwrap() {
+            Some(Ok(Message::Close(Some(f)))) => {
+                assert_eq!(f.code, CloseCode::Normal);
+                break;
+            }
+            Some(Ok(Message::Ping(_) | Message::Pong(_))) => {}
+            other => panic!("{other:?}"),
+        }
+    }
+    assert_eq!(server.ws_stats().heartbeat_timeouts, 0);
+    server.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn many_slow_clients_are_all_released_and_the_limit_recovers() {
+    const N: usize = 16;
+    let s = Stall::default();
+    let server = stall_server(
+        s.clone(),
+        poring::Limits {
+            max_ws_sessions: N,
+            ..Default::default()
+        },
+    )
+    .await;
+    let addr = server.local_addr();
+    let mut raws = Vec::new();
+    for _ in 0..N {
+        raws.push(Raw::connect(addr, "/heartbeat").await);
+    }
+    eventually("all started", || Probe::get(&s.started) == N).await;
+    // None of them reads or answers pings: every session ends on its own.
+    eventually("all heartbeats timed out", || {
+        server.ws_stats().heartbeat_timeouts == N as u64
+    })
+    .await;
+    eventually("all released", || server.ws_stats().active_sessions == 0).await;
+    eventually("all handlers ended", || Probe::get(&s.dropped) == N).await;
+    // Every permit came back: a full set of new sessions is admitted again.
+    drop(raws);
+    let mut again = Vec::new();
+    for _ in 0..N {
+        again.push(client(addr, "/burst").await);
+    }
+    drop(again);
+    eventually("released again", || server.ws_stats().active_sessions == 0).await;
+    server.shutdown().await.unwrap();
+}
+
+async fn write_timeout_server(s: Stall) -> poring::Server {
+    let (a, b) = (s.clone(), s.clone());
+    Poring::new()
+        // Only the write timeout can end a stuck session here.
+        .ws("/write-timeout", move |ws: WebSocketUpgrade| {
+            let s = a.clone();
+            async move {
+                ws.managed()
+                    .no_idle_timeout()
+                    .no_ping()
+                    .write_timeout(Duration::from_millis(300))
+                    .queue_messages(4)
+                    .max_queued_bytes(256 * 1024)
+                    .on_upgrade(move |sock| flood(sock, s, usize::MAX))
+            }
+        })
+        // Heartbeats and a write timeout, for a client that reads slowly but steadily.
+        .ws("/slow-reader", move |ws: WebSocketUpgrade| {
+            let s = b.clone();
+            async move {
+                ws.managed()
+                    .no_idle_timeout()
+                    .ping_interval(Duration::from_millis(100))
+                    .pong_timeout(Duration::from_secs(2))
+                    .write_timeout(Duration::from_secs(2))
+                    .queue_messages(4)
+                    .max_queued_bytes(256 * 1024)
+                    .on_upgrade(move |sock| flood(sock, s, usize::MAX))
+            }
+        })
+        .build()
+        .unwrap()
+        .bind("127.0.0.1:0")
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn a_write_that_cannot_complete_ends_the_session_at_its_deadline() {
+    let s = Stall::default();
+    let server = write_timeout_server(s.clone()).await;
+    let addr = server.local_addr();
+    let _raw = Raw::connect(addr, "/write-timeout").await;
+    eventually("write timeout counted", || {
+        server.ws_stats().write_timeouts == 1
+    })
+    .await;
+    eventually("session released", || {
+        server.ws_stats().active_sessions == 0
+    })
+    .await;
+    eventually("handler ended", || Probe::get(&s.dropped) == 1).await;
+    let stats = server.ws_stats();
+    assert_eq!((stats.heartbeat_timeouts, stats.idle_timeouts), (0, 0));
+    server.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_slow_but_steady_reader_is_not_mistaken_for_a_dead_one() {
+    let s = Stall::default();
+    let server = write_timeout_server(s.clone()).await;
+    let addr = server.local_addr();
+    // tungstenite answers each ping when it reads it.
+    let mut ws = client(addr, "/slow-reader").await;
+    let until = Instant::now() + Duration::from_millis(1500);
+    let mut got = 0;
+    while Instant::now() < until {
+        match tokio::time::timeout(BOUND, ws.next()).await.unwrap() {
+            Some(Ok(Message::Binary(_))) => got += 1,
+            Some(Ok(Message::Ping(_) | Message::Pong(_))) => {}
+            other => panic!("session ended after {got} messages: {other:?}"),
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    assert!(got > 10, "data kept flowing ({got})");
+    let stats = server.ws_stats();
+    assert_eq!(
+        (
+            stats.heartbeat_timeouts,
+            stats.write_timeouts,
+            stats.active_sessions
+        ),
+        (0, 0, 1)
+    );
+    drop(ws);
+    eventually("released", || server.ws_stats().active_sessions == 0).await;
+    server.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn shutdown_during_a_blocked_write_with_a_write_timeout_disabled() {
+    // Same as `shutdown_is_not_held_up_by_a_blocked_write`, but with the client gone
+    // half-way: the pending write fails and shutdown still finishes promptly.
+    let s = Stall::default();
+    let server = stall_server(
+        s.clone(),
+        poring::Limits {
+            shutdown_grace: Duration::from_secs(30),
+            ..Default::default()
+        },
+    )
+    .await;
+    let addr = server.local_addr();
+    let raws = [
+        Raw::connect(addr, "/no-timers").await,
+        Raw::connect(addr, "/no-timers").await,
+    ];
+    eventually("both started", || Probe::get(&s.started) == 2).await;
+    until_stalled(&s).await;
+    let [_keep, gone] = raws;
+    drop(gone);
+    let start = Instant::now();
+    tokio::time::timeout(BOUND, server.shutdown())
+        .await
+        .expect("bounded")
+        .unwrap();
+    assert!(
+        start.elapsed() < Duration::from_secs(2),
+        "{:?}",
+        start.elapsed()
+    );
+    assert_eq!(Probe::get(&s.dropped), 2);
 }

@@ -98,6 +98,17 @@ pub use poring_macros::{
 pub use bytes::Bytes;
 pub use http::{self, HeaderMap, HeaderValue, Method, StatusCode, Uri};
 
+// Compiles the code blocks of `docs/guide.md` (repository only; not part of the package).
+#[cfg(all(
+    doctest,
+    feature = "json",
+    feature = "websocket",
+    feature = "http2",
+    feature = "tls-rustls"
+))]
+#[doc = include_str!("../../../docs/guide.md")]
+mod guide_doctests {}
+
 /// Everyday imports.
 pub mod prelude {
     pub use crate::descriptor::Method as RouteMethod;

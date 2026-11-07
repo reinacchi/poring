@@ -13,7 +13,7 @@ license = "MIT"
 [dependencies]
 poring = { path = "../../crates/poring", default-features = false, features = ["websocket"] }
 axum = { version = "0.8", default-features = false, features = ["ws", "tokio", "http1"] }
-tokio = { version = "1.54", features = ["rt-multi-thread", "net", "time", "macros", "sync", "process", "io-util"] }
+tokio = { version = "1.54", features = ["rt-multi-thread", "net", "time", "macros", "sync", "process", "io-util", "io-std"] }
 tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect"] }
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 sysinfo = { version = "0.37", default-features = false, features = ["system"] }

@@ -8,9 +8,10 @@
 #
 # Targets (default: ci):
 #   ci              lint core features isolated-tests examples docs   (every PR/push)
-#   heavy           wasm-features wasm-tests all-features package     (weekly / on demand)
+#   heavy           wasm-features wasm-tests all-features package stress-smoke
+#                                                                     (weekly / on demand)
 #   everything      ci + heavy
-#   lint | core | examples | docs | wasm-tests | all-features | package
+#   lint | core | examples | docs | wasm-tests | all-features | package | stress-smoke
 #   features [FLAGS]        one feature-matrix entry, or all of them
 #   isolated-tests [FEATS]  one integration-test feature group, or all of them
 #   wasm-features [FEAT]    one Wasm-family feature, or all of them
@@ -222,9 +223,31 @@ t_all_features() {
 
 t_package() {
   c package --locked -p poring-macros
-  # `poring` depends on the published `poring-macros`; listing the package contents
-  # validates the manifest without requiring that version on crates.io.
   c package --locked -p poring --list
+  # Both crates packaged together: `poring`'s verify build uses the packaged
+  # `poring-macros`, so this also checks the exact version pin between them.
+  c package --locked -p poring-macros -p poring
+  run package_consumer
+}
+
+# Builds and runs scripts/consumer (HTTP, macros, WebSocket origin policy, typed managed
+# WebSockets) against the extracted `.crate` files only, outside the workspace.
+package_consumer() {
+  local dir version_p version_m
+  dir="$(mktemp -d)"
+  version_p="$("${CARGO[@]}" pkgid -p poring | sed 's/.*[#@]//')"
+  version_m="$("${CARGO[@]}" pkgid -p poring-macros | sed 's/.*[#@]//')"
+  mkdir -p "$dir/vendor" "$dir/src" &&
+    tar xzf "target/package/poring-$version_p.crate" -C "$dir/vendor" &&
+    tar xzf "target/package/poring-macros-$version_m.crate" -C "$dir/vendor" &&
+    mv "$dir/vendor/poring-$version_p" "$dir/vendor/poring" &&
+    mv "$dir/vendor/poring-macros-$version_m" "$dir/vendor/poring-macros" &&
+    cp scripts/consumer/Cargo.toml.in "$dir/Cargo.toml" &&
+    cp scripts/consumer/src/main.rs "$dir/src/main.rs" &&
+    (cd "$dir" && CARGO_TARGET_DIR="$dir/target" "${CARGO[@]}" run --quiet)
+  local rc=$?
+  rm -rf "$dir"
+  return $rc
 }
 
 t_ci() {
@@ -236,11 +259,34 @@ t_ci() {
   t_docs
 }
 
+# Builds the benchmark harness and runs a small sustained-load pass: every profile
+# (idle, echo, slow readers, churn, abrupt disconnects, shutdown under load) at 100
+# connections. The harness asserts nothing about speed; it fails if sessions leak.
+t_stress_smoke() {
+  run "${CARGO[@]}" build --release --locked --manifest-path benches/ws-bench/Cargo.toml &&
+    run stress_smoke_check
+}
+
+stress_smoke_check() {
+  local out
+  local exe="${CARGO_TARGET_DIR:-benches/ws-bench/target}/release/ws-bench"
+  [[ -x "$exe" ]] || exe="$exe.exe"
+  out="$("$exe" stress --conns 100 --secs 2)" || return 1
+  echo "$out"
+  # Every row must have no failed handshakes and a completed cleanup (or shutdown).
+  echo "$out" | awk -F'|' '/^\| (idle|small|medium|large|slow|churn|abrupt|shutdown) /{
+      gsub(/ /,"",$5); gsub(/ /,"",$16); gsub(/ /,"",$17);
+      if ($5 != "0" || ($16 == "n/a" && $17 == "n/a")) { print "leak or failure: " $0; bad=1 }
+      rows++ }
+    END { exit (bad || rows != 8) }'
+}
+
 t_heavy() {
   t_wasm_features
   t_wasm_tests
   t_all_features
   t_package
+  t_stress_smoke
 }
 
 case "$TARGET" in
@@ -263,6 +309,7 @@ case "$TARGET" in
   wasm-tests) t_wasm_tests ;;
   all-features) t_all_features ;;
   package) t_package ;;
+  stress-smoke) t_stress_smoke ;;
   *)
     echo "unknown target: $TARGET (see the header of $0)" >&2
     exit 2

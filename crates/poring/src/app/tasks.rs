@@ -34,7 +34,8 @@ struct State {
     /// [`TaskTracker::abort_all`] ran: nothing is spawned any more.
     aborted: bool,
     next: u64,
-    tasks: HashMap<u64, tokio::task::AbortHandle>,
+    /// Live tasks by id; `None` while a task is being spawned.
+    tasks: HashMap<u64, Option<tokio::task::AbortHandle>>,
 }
 
 /// Removes its task from the set when the task's future is dropped, however it ends.
@@ -94,12 +95,18 @@ impl TaskTracker {
     }
 
     fn spawn_inner(&self, fut: impl Future<Output = ()> + Send + 'static, admit: bool) -> bool {
-        let mut st = lock(&self.inner.state);
-        if st.aborted || (admit && !st.accepting) {
-            return false;
-        }
-        let id = st.next;
-        st.next += 1;
+        let id = {
+            let mut st = lock(&self.inner.state);
+            if st.aborted || (admit && !st.accepting) {
+                return false;
+            }
+            let id = st.next;
+            st.next += 1;
+            // Reserved before the task exists, so the entry's removal can never precede
+            // its registration.
+            st.tasks.insert(id, None);
+            id
+        };
         self.inner.live.send_modify(|n| *n += 1);
         let entry = Entry {
             inner: self.inner.clone(),
@@ -115,10 +122,17 @@ impl TaskTracker {
                 hook();
             }
         };
-        // Registered before the lock is released, so the entry's removal (which needs the
-        // lock) can never precede its insertion.
-        let handle = tokio::spawn(task);
-        st.tasks.insert(id, handle.abort_handle());
+        // Spawned without holding the lock: on a runtime that is shutting down Tokio drops
+        // the task inside `spawn`, and the entry's removal takes the lock.
+        let handle = tokio::spawn(task).abort_handle();
+        let mut st = lock(&self.inner.state);
+        let aborted = st.aborted;
+        match st.tasks.get_mut(&id) {
+            Some(slot) => *slot = Some(handle),
+            // Ended already, or drained by `abort_all` meanwhile (then abort it too).
+            None if aborted => handle.abort(),
+            None => {}
+        }
         true
     }
 
@@ -153,7 +167,7 @@ impl TaskTracker {
             let mut st = lock(&self.inner.state);
             st.aborted = true;
             st.accepting = false;
-            st.tasks.drain().map(|(_, h)| h).collect()
+            st.tasks.drain().filter_map(|(_, h)| h).collect()
         };
         for h in &handles {
             h.abort();
@@ -257,6 +271,31 @@ mod tests {
             .expect("aborted tasks are dropped");
         assert_eq!(dropped.load(Ordering::SeqCst), 10);
         assert!(!t.spawn_draining(async {}), "aborted: nothing is spawned");
+    }
+
+    /// Tokio drops a task spawned onto a runtime that is shutting down synchronously, inside
+    /// `spawn`; the entry's removal must not deadlock against the registration.
+    #[test]
+    fn spawning_onto_a_shut_down_runtime_does_not_deadlock() {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .build()
+            .unwrap();
+        let handle = rt.handle().clone();
+        rt.shutdown_timeout(Duration::from_secs(1));
+        let t = TaskTracker::new();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let t2 = t.clone();
+        std::thread::spawn(move || {
+            let _g = handle.enter();
+            let _ = t2.spawn(async {});
+            let _ = t2.spawn_draining(async {});
+            let _ = tx.send(());
+        });
+        rx.recv_timeout(Duration::from_secs(5))
+            .expect("spawn returned (no deadlock)");
+        assert_eq!(t.len(), 0, "dropped tasks are not counted as live");
+        assert_eq!(t.registered(), 0, "and not left registered");
     }
 
     #[tokio::test]

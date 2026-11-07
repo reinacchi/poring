@@ -4,8 +4,15 @@
 //! cd benches/ws-bench
 //! cargo run --release -- run                      # full matrix, Markdown report on stdout
 //! cargo run --release -- run --sizes 64,1024 --conns 1,64 --secs 3
+//! cargo run --release -- run --frameworks poring --route managed   # Poring managed path
 //! cargo run --release -- server poring 127.0.0.1:9001   # a server only
+//! cargo run --release -- stress --conns 100,1000 --secs 10   # see src/stress.rs
 //! ```
+//!
+//! `--route echo` (default) compares the raw echo paths of both frameworks. `--route
+//! managed` runs Poring's managed session (pings, pong/idle/write deadlines, bounded
+//! queues) and is only meaningful against Poring's own raw numbers: Axum has no equivalent
+//! built in, and comparing it to an Axum raw echo would compare different work.
 //!
 //! For each framework the harness starts this binary as a **separate server process**
 //! (same build, same Tokio version, release mode) and drives it from the client process:
@@ -31,6 +38,8 @@ use futures_util::{SinkExt, StreamExt};
 use tokio::io::AsyncBufReadExt;
 use tokio_tungstenite::tungstenite::Message;
 
+mod stress;
+
 const MAX_MESSAGE: usize = 1 << 20;
 
 fn main() {
@@ -42,9 +51,19 @@ fn main() {
             server_main(&fw, &addr);
         }
         Some("run") => run_main(&args[1..]),
+        Some("stress-server") => {
+            let addr = args.get(1).cloned().unwrap_or_else(|| "127.0.0.1:0".into());
+            stress::server_main(&addr);
+        }
+        Some("stress") => stress::main(&args[1..]),
         _ => {
-            eprintln!("usage: ws-bench run [--frameworks poring,axum] [--sizes 64,256,...] [--conns 1,64,...] [--secs N]");
+            eprintln!(
+                "usage: ws-bench run [--frameworks poring,axum] [--sizes 64,256,...] [--conns 1,64,...] [--secs N] [--route echo|managed]"
+            );
             eprintln!("       ws-bench server <poring|axum> [addr]");
+            eprintln!(
+                "       ws-bench stress [--conns 100,1000] [--secs N] [--profiles idle,small,...]"
+            );
             std::process::exit(2);
         }
     }
@@ -94,10 +113,24 @@ async fn poring_server(listener: tokio::net::TcpListener) {
                     }
                 })
         })
+        // Same echo through a managed session (default heartbeat and deadlines).
+        .ws("/managed", |ws: WebSocketUpgrade| async move {
+            ws.max_message_size(MAX_MESSAGE)
+                .managed()
+                .on_upgrade(|mut sock| async move {
+                    while let Some(m) = sock.recv().await {
+                        if sock.send(m).await.is_err() {
+                            break;
+                        }
+                    }
+                })
+        })
         .build()
         .unwrap();
     // Runs until the harness kills the process.
-    app.serve(listener, std::future::pending::<()>()).await.unwrap();
+    app.serve(listener, std::future::pending::<()>())
+        .await
+        .unwrap();
 }
 
 async fn axum_server(listener: tokio::net::TcpListener) {
@@ -127,14 +160,15 @@ async fn axum_server(listener: tokio::net::TcpListener) {
 
 // ---------------------------------------------------------------- harness
 
-struct Opts {
+pub(crate) struct Opts {
     frameworks: Vec<String>,
     sizes: Vec<usize>,
     conns: Vec<usize>,
     secs: u64,
+    route: String,
 }
 
-fn list<T: std::str::FromStr>(s: &str) -> Vec<T> {
+pub(crate) fn list<T: std::str::FromStr>(s: &str) -> Vec<T> {
     s.split(',').filter_map(|x| x.trim().parse().ok()).collect()
 }
 
@@ -144,6 +178,7 @@ fn parse_opts(args: &[String]) -> Opts {
         sizes: vec![64, 256, 1024, 4096, 16384, 65536],
         conns: vec![1, 64, 256],
         secs: 3,
+        route: "echo".into(),
     };
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -153,6 +188,7 @@ fn parse_opts(args: &[String]) -> Opts {
             "--sizes" => o.sizes = list(v),
             "--conns" => o.conns = list(v),
             "--secs" => o.secs = v.parse().unwrap_or(3),
+            "--route" => o.route = v.to_owned(),
             other => panic!("unknown option {other}"),
         }
     }
@@ -180,6 +216,10 @@ struct Row {
 
 fn run_main(args: &[String]) {
     let opts = parse_opts(args);
+    assert!(
+        opts.route == "echo" || (opts.route == "managed" && opts.frameworks == ["poring"]),
+        "--route managed is Poring-only (use --frameworks poring)"
+    );
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -189,7 +229,7 @@ fn run_main(args: &[String]) {
         for &conns in &opts.conns {
             for &size in &opts.sizes {
                 // A fresh server process per cell, so state never carries over.
-                let row = rt.block_on(cell(fw, conns, size, opts.secs));
+                let row = rt.block_on(cell(fw, &opts.route, conns, size, opts.secs));
                 eprintln!(
                     "{fw:6} conns={conns:4} size={size:6}: {:>9.0} rt/s  p50 {:>6} us  p99 {:>6} us  cpu {:>5.0}%  rss {:>6.1} MiB  errors {}",
                     row.rtt_per_s, row.p50_us, row.p99_us, row.cpu_pct, row.rss_mib, row.errors
@@ -201,7 +241,7 @@ fn run_main(args: &[String]) {
     print_report(&opts, &rows);
 }
 
-async fn cell(fw: &str, conns: usize, size: usize, secs: u64) -> Row {
+async fn cell(fw: &str, route: &str, conns: usize, size: usize, secs: u64) -> Row {
     let exe = std::env::current_exe().unwrap();
     let mut child = tokio::process::Command::new(exe)
         .args(["server", fw, "127.0.0.1:0"])
@@ -217,7 +257,7 @@ async fn cell(fw: &str, conns: usize, size: usize, secs: u64) -> Row {
         .await
         .unwrap();
     let addr: SocketAddr = line.trim().parse().expect("server address");
-    let url = format!("ws://{addr}/echo");
+    let url = format!("ws://{addr}/{route}");
     let mut row = Row {
         fw: fw.to_owned(),
         conns,
@@ -352,7 +392,7 @@ async fn sample_server(pid: sysinfo::Pid, from: Instant, until: Instant) -> (f64
     (avg, rss as f64 / (1024.0 * 1024.0))
 }
 
-fn pct(sorted: &[u64], q: f64) -> u64 {
+pub(crate) fn pct(sorted: &[u64], q: f64) -> u64 {
     if sorted.is_empty() {
         return 0;
     }
