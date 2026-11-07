@@ -79,8 +79,24 @@ pub struct Limits {
     pub max_query_bytes: usize,
     /// Maximum urlencoded fields in a query string or form body.
     pub max_form_fields: usize,
-    /// Maximum concurrent connections.
+    /// Maximum concurrent TCP connections per listener (`serve`/`bind`). An upgraded
+    /// WebSocket keeps its connection's slot until the session ends.
     pub max_connections: usize,
+    /// Maximum concurrently running WebSocket sessions per listener (`websocket`
+    /// feature). Checked before `101 Switching Protocols`; when full, handshakes get
+    /// `503`. Independent of `max_connections`, which still bounds the TCP connections the
+    /// sessions run on.
+    pub max_ws_sessions: usize,
+    /// Maximum concurrent WebSocket sessions per client IP, per listener (`websocket`
+    /// feature). The IP is resolved like the HTTP rate limiter's: the TCP peer, or the
+    /// client named by trusted proxies' forwarding headers. Over the limit, handshakes get
+    /// `429`. Default `usize::MAX` (no per-IP limit), because clients behind one NAT or
+    /// proxy share an address.
+    pub max_ws_sessions_per_ip: usize,
+    /// Maximum concurrent WebSocket sessions per authenticated principal (identity
+    /// subject), per listener. Anonymous sessions are not counted. Over the limit,
+    /// handshakes get `429`. Default `usize::MAX` (no limit).
+    pub max_ws_sessions_per_principal: usize,
     /// Time allowed for a client to send request headers.
     pub header_read_timeout: Duration,
     /// Grace period for in-flight requests on shutdown.
@@ -97,6 +113,9 @@ impl Default for Limits {
             max_query_bytes: 8 * 1024,
             max_form_fields: 256,
             max_connections: 10_000,
+            max_ws_sessions: 10_000,
+            max_ws_sessions_per_ip: usize::MAX,
+            max_ws_sessions_per_principal: usize::MAX,
             header_read_timeout: Duration::from_secs(30),
             shutdown_grace: Duration::from_secs(10),
             rate_limit_keys: 100_000,
@@ -220,6 +239,7 @@ pub(crate) struct BuilderConfig<S> {
     pub(crate) trusted_proxies: Vec<String>,
     pub(crate) legacy_forwarded_for: bool,
     pub(crate) rate_limit_ceiling: Option<RateLimit>,
+    pub(crate) ws_origins: crate::policy::WsOrigins,
 }
 
 impl<S> Default for BuilderConfig<S> {
@@ -237,6 +257,7 @@ impl<S> Default for BuilderConfig<S> {
             trusted_proxies: Vec::new(),
             legacy_forwarded_for: false,
             rate_limit_ceiling: None,
+            ws_origins: crate::policy::WsOrigins::new(),
         }
     }
 }
@@ -250,7 +271,8 @@ macro_rules! config_methods {
             self
         }
 
-        /// Enables runtime flow recording (sampling 1 in `sample_every`).
+        /// Enables runtime flow recording (sampling 1 in `sample_every`). Requires the
+        /// `trace-flow` feature; without it `build()` logs a warning and nothing is recorded.
         pub fn flow_recording(mut self, cfg: $crate::flow::FlowConfig) -> Self {
             self.cfg.flow = cfg;
             self
@@ -327,6 +349,14 @@ macro_rules! config_methods {
         /// principal-keyed ceiling covers authenticated routes only.
         pub fn rate_limit_ceiling(mut self, limit: $crate::policy::RateLimit) -> Self {
             self.cfg.rate_limit_ceiling = Some(limit);
+            self
+        }
+
+        /// Origins allowed to open WebSocket connections, in addition to same-origin and
+        /// explicit CORS origins. See [`crate::policy::WsOrigins`]; invalid entries are
+        /// reported by `build()`.
+        pub fn ws_origins(mut self, origins: $crate::policy::WsOrigins) -> Self {
+            self.cfg.ws_origins = origins;
             self
         }
 
@@ -534,6 +564,11 @@ impl<A: AppSpec> App<A> {
                     .into(),
             ));
         }
+        let ws_origins = crate::policy::ws_origin::WsOriginPolicy::from_config(
+            &cfg.ws_origins,
+            level.auth_uses_cookies,
+        )
+        .map_err(config)?;
         let proxies = TrustedProxies::parse(&cfg.trusted_proxies)
             .map_err(|e| config(format!("trusted_proxies: {e}")))?;
         RateLimiter::validate_capacity(cfg.limits.rate_limit_keys).map_err(config)?;
@@ -551,6 +586,23 @@ impl<A: AppSpec> App<A> {
         }
         let planned = plan::plan::<A>(&level, cfg.native, cfg.dynamic)?;
         let router = Router::build(&planned.routes)?;
+        // Per-route WebSocket origin policies, indexed like `routes` (route.index).
+        let mut route_ws_origins = Vec::with_capacity(planned.routes.len());
+        for (i, r) in planned.routes.iter().enumerate() {
+            if r.index as usize != i {
+                return Err(config(format!("internal: route index {} at {i}", r.index)));
+            }
+            route_ws_origins.push(match &r.policy.ws_origins {
+                Some(o) => Some(
+                    crate::policy::ws_origin::WsOriginPolicy::from_config(
+                        o,
+                        level.auth_uses_cookies,
+                    )
+                    .map_err(|e| config(format!("route `{}`: {e}", r.id)))?,
+                ),
+                None => None,
+            });
+        }
         Ok(App {
             inner: Arc::new(AppInner {
                 state,
@@ -558,7 +610,14 @@ impl<A: AppSpec> App<A> {
                 name: level.name,
                 router,
                 limiter: RateLimiter::new(cfg.limits.rate_limit_keys),
-                recorder: FlowRecorder::new(cfg.flow),
+                recorder: {
+                    if !cfg!(feature = "trace-flow") && cfg.flow.sample_every != 0 {
+                        tracing::warn!(
+                            "flow recording was requested but poring was built without the                              `trace-flow` feature; nothing will be recorded"
+                        );
+                    }
+                    FlowRecorder::new(cfg.flow)
+                },
                 cors: level.cors.as_ref().map(CorsRuntime::from_cors),
                 routes: planned.routes,
                 native: planned.native,
@@ -572,9 +631,20 @@ impl<A: AppSpec> App<A> {
                 error_mapper: cfg.error_mapper,
                 request_ids: cfg.request_ids,
                 proxies,
+                ws_origins,
+                route_ws_origins: route_ws_origins.into_boxed_slice(),
+                #[cfg(feature = "websocket")]
+                ws_counters: Default::default(),
                 manifest_base: planned.manifest,
             }),
         })
+    }
+
+    /// A snapshot of this app's WebSocket counters, summed over every listener serving it
+    /// (`websocket` feature). See [`crate::ws::WsStats`].
+    #[cfg(feature = "websocket")]
+    pub fn ws_stats(&self) -> crate::ws::WsStats {
+        self.inner.ws_counters.snapshot()
     }
 
     /// Serves on `addr` until Ctrl-C, then drains gracefully.

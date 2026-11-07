@@ -31,6 +31,8 @@ pub enum Stage {
     CorsPreflight,
     /// CORS check.
     Cors,
+    /// WebSocket handshake origin check.
+    WsOrigin,
     /// Rate limit.
     RateLimit,
     /// Authentication.
@@ -106,6 +108,7 @@ impl fmt::Display for NodeId<'_> {
             Stage::MethodNotAllowed => f.write_str(stage::METHOD_NOT_ALLOWED),
             Stage::CorsPreflight => f.write_str(stage::CORS_PREFLIGHT),
             Stage::Cors => f.write_str(stage::CORS),
+            Stage::WsOrigin => f.write_str(stage::WS_ORIGIN),
             Stage::RateLimit => f.write_str(stage::RATE_LIMIT),
             Stage::Auth => f.write_str(stage::AUTH),
             Stage::Authz => f.write_str(stage::AUTHZ),
@@ -187,6 +190,10 @@ impl FlowState {
 }
 
 /// Sampling configuration for the flow recorder.
+///
+/// Recording is compiled in only with the `trace-flow` feature (on by default). Without it
+/// the configuration is accepted but nothing is sampled, stored or allocated, and
+/// [`FlowRecorder::is_active`] is `false`; static flow graphs and contracts are unaffected.
 #[derive(Clone, Copy, Debug)]
 pub struct FlowConfig {
     /// Record 1 in `sample_every` requests (1 = every request). 0 disables recording.
@@ -229,15 +236,31 @@ impl FlowRecorder {
         FlowRecorder {
             cfg,
             counter: AtomicU64::new(0),
-            buf: Mutex::new(VecDeque::with_capacity(cfg.capacity.min(4096))),
+            // No buffer is allocated unless recording can actually happen.
+            buf: Mutex::new(if Self::active(&cfg) {
+                VecDeque::with_capacity(cfg.capacity.min(4096))
+            } else {
+                VecDeque::new()
+            }),
             recorded: AtomicU64::new(0),
             dropped: AtomicU64::new(0),
         }
     }
 
+    /// Whether `cfg` records anything in this build: requires the `trace-flow` feature and
+    /// a non-zero `sample_every`.
+    fn active(cfg: &FlowConfig) -> bool {
+        cfg!(feature = "trace-flow") && cfg.sample_every != 0
+    }
+
+    /// Whether this recorder records anything (see [`FlowConfig`]).
+    pub fn is_active(&self) -> bool {
+        Self::active(&self.cfg)
+    }
+
     /// Decides whether to sample the next request.
     pub(crate) fn sample(&self) -> bool {
-        if !cfg!(feature = "trace-flow") || self.cfg.sample_every == 0 {
+        if !Self::active(&self.cfg) {
             return false;
         }
         self.counter
@@ -277,5 +300,30 @@ impl FlowRecorder {
             recorded: self.recorded.load(Ordering::Relaxed),
             dropped: self.dropped.load(Ordering::Relaxed),
         }
+    }
+}
+
+#[cfg(test)]
+mod feature_tests {
+    use super::{FlowConfig, FlowRecorder};
+
+    #[test]
+    fn recording_follows_the_trace_flow_feature() {
+        let on = FlowRecorder::new(FlowConfig {
+            sample_every: 1,
+            capacity: 64,
+        });
+        assert_eq!(on.is_active(), cfg!(feature = "trace-flow"));
+        assert_eq!(on.sample(), cfg!(feature = "trace-flow"));
+        let capacity = on.buf.lock().unwrap().capacity();
+        if cfg!(feature = "trace-flow") {
+            assert!(capacity >= 64);
+        } else {
+            assert_eq!(capacity, 0, "no buffer without `trace-flow`");
+        }
+        // Disabled by configuration: never samples, never allocates.
+        let off = FlowRecorder::new(FlowConfig::default());
+        assert!(!off.is_active() && !off.sample());
+        assert_eq!(off.buf.lock().unwrap().capacity(), 0);
     }
 }

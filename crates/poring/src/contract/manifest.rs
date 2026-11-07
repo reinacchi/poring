@@ -167,6 +167,10 @@ pub struct PolicyView {
     /// App-wide ceiling enforced in addition to `rate_limit`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rate_limit_ceiling: Option<RateLimitView>,
+    /// WebSocket origins declared for this route (`["*"]` = any); absent when the app
+    /// default applies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ws_origins: Option<Vec<String>>,
     /// Provenance of each effective setting, e.g. `auth=required <- app defaults`.
     pub provenance: Vec<String>,
     /// Runtime checks executed for this route, in order.

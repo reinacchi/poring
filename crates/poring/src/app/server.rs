@@ -18,6 +18,8 @@ impl<A: AppSpec> App<A> {
         let listener = tokio::net::TcpListener::bind(addr).await?;
         let local = listener.local_addr()?;
         let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+        #[cfg(feature = "websocket")]
+        let ws = self.inner.ws_counters.clone();
         let join = tokio::spawn(self.serve(listener, async move {
             let _ = rx.await;
         }));
@@ -25,6 +27,8 @@ impl<A: AppSpec> App<A> {
             addr: local,
             shutdown: Some(tx),
             join,
+            #[cfg(feature = "websocket")]
+            ws,
         })
     }
 
@@ -36,8 +40,64 @@ impl<A: AppSpec> App<A> {
         listener: tokio::net::TcpListener,
         shutdown: impl Future<Output = ()> + Send,
     ) -> std::io::Result<()> {
+        self.serve_transport(listener, shutdown, Transport::Plain)
+            .await
+    }
+
+    /// [`bind`](Self::bind) with TLS (`tls-rustls` feature): HTTPS and `wss://`.
+    #[cfg(feature = "tls-rustls")]
+    pub async fn bind_tls(
+        self,
+        addr: impl tokio::net::ToSocketAddrs,
+        tls: crate::tls::TlsConfig,
+    ) -> std::io::Result<Server> {
+        let listener = tokio::net::TcpListener::bind(addr).await?;
+        let local = listener.local_addr()?;
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+        #[cfg(feature = "websocket")]
+        let ws = self.inner.ws_counters.clone();
+        let join = tokio::spawn(self.serve_transport(
+            listener,
+            async move {
+                let _ = rx.await;
+            },
+            Transport::Tls(tls.acceptor()),
+        ));
+        Ok(Server {
+            addr: local,
+            shutdown: Some(tx),
+            join,
+            #[cfg(feature = "websocket")]
+            ws,
+        })
+    }
+
+    /// [`serve`](Self::serve) with TLS (`tls-rustls` feature). Each connection's TLS
+    /// handshake must finish within `Limits::header_read_timeout`.
+    #[cfg(feature = "tls-rustls")]
+    pub async fn serve_tls(
+        self,
+        listener: tokio::net::TcpListener,
+        tls: crate::tls::TlsConfig,
+        shutdown: impl Future<Output = ()> + Send,
+    ) -> std::io::Result<()> {
+        self.serve_transport(listener, shutdown, Transport::Tls(tls.acceptor()))
+            .await
+    }
+
+    async fn serve_transport(
+        self,
+        listener: tokio::net::TcpListener,
+        shutdown: impl Future<Output = ()> + Send,
+        transport: Transport,
+    ) -> std::io::Result<()> {
         let max = self.inner.limits.max_connections.max(1);
         let permits = Arc::new(tokio::sync::Semaphore::new(max));
+        #[cfg(feature = "websocket")]
+        let sessions = Arc::new(crate::ws::Supervisor::new(
+            self.inner.limits.max_ws_sessions,
+            self.inner.ws_counters.clone(),
+        ));
         let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
         tokio::pin!(shutdown);
         loop {
@@ -63,35 +123,109 @@ impl<A: AppSpec> App<A> {
             let _ = stream.set_nodelay(true);
             let app = self.clone();
             let mut stop = stop_rx.clone();
+            // Shared with any WebSocket session upgraded from this connection, so the slot
+            // stays taken until both the connection task and the session have ended.
+            let permit = Arc::new(permit);
+            let conn = Conn {
+                permit: permit.clone(),
+                #[cfg(feature = "websocket")]
+                sessions: sessions.clone(),
+            };
+            let transport = transport.clone();
             tokio::spawn(async move {
                 let _permit = permit;
-                serve_conn(app, stream, peer, &mut stop).await;
+                match transport {
+                    Transport::Plain => serve_conn(app, stream, peer, conn, &mut stop).await,
+                    #[cfg(feature = "tls-rustls")]
+                    Transport::Tls(acceptor) => {
+                        let limit = app.inner.limits.header_read_timeout;
+                        let handshake = tokio::time::timeout(limit, acceptor.accept(stream));
+                        let tls = tokio::select! {
+                            r = handshake => r,
+                            _ = stop.wait_for(|s| *s) => return,
+                        };
+                        match tls {
+                            Ok(Ok(tls)) => serve_conn(app, tls, peer, conn, &mut stop).await,
+                            // No key material or peer data in these messages.
+                            Ok(Err(e)) => tracing::debug!(error = %e, "tls handshake failed"),
+                            Err(_) => tracing::debug!("tls handshake timed out"),
+                        }
+                    }
+                }
             });
         }
         drop(listener);
+        // No new WebSocket sessions once shutdown has begun (late upgrades get 503).
+        #[cfg(feature = "websocket")]
+        sessions.close();
         let _ = stop_tx.send(true);
-        let drained = tokio::time::timeout(
-            self.inner.limits.shutdown_grace,
-            permits.acquire_many(max as u32),
-        )
-        .await;
+        let grace = self.inner.limits.shutdown_grace;
+        // Connections, including those carrying WebSocket sessions, drain until `grace`.
+        let drained = tokio::time::timeout(grace, permits.acquire_many(max as u32)).await;
         if drained.is_err() {
             tracing::warn!("graceful shutdown grace period elapsed with connections still open");
         }
+        // Sessions still running after the grace period are cancelled, so none outlives
+        // `serve`.
+        #[cfg(feature = "websocket")]
+        sessions
+            .abort_all(grace.max(Duration::from_millis(100)))
+            .await;
         Ok(())
     }
 }
 
-async fn serve_conn<A: AppSpec>(
+/// How accepted connections are wrapped.
+#[derive(Clone)]
+enum Transport {
+    Plain,
+    #[cfg(feature = "tls-rustls")]
+    Tls(tokio_rustls::TlsAcceptor),
+}
+
+/// Per-connection resources handed to upgrade requests.
+struct Conn {
+    #[cfg_attr(not(feature = "websocket"), allow(dead_code))]
+    permit: Arc<tokio::sync::OwnedSemaphorePermit>,
+    #[cfg(feature = "websocket")]
+    sessions: Arc<crate::ws::Supervisor>,
+}
+
+async fn serve_conn<A: AppSpec, S>(
     app: App<A>,
-    stream: tokio::net::TcpStream,
+    stream: S,
     peer: SocketAddr,
+    conn: Conn,
     stop: &mut tokio::sync::watch::Receiver<bool>,
-) {
+) where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    // Without WebSocket support no request can be upgraded into a session.
+    #[cfg(not(feature = "websocket"))]
+    drop(conn);
     let io = hyper_util::rt::TokioIo::new(stream);
     let header_timeout = app.inner.limits.header_read_timeout;
     let svc = hyper::service::service_fn(move |req: Request<hyper::body::Incoming>| {
         let app = app.clone();
+        #[cfg(feature = "websocket")]
+        let mut req = req;
+        // Only WebSocket upgrade requests pay for the admission handle.
+        #[cfg(feature = "websocket")]
+        if crate::policy::ws_origin::websocket_handshake(
+            req.method(),
+            req.version(),
+            req.headers(),
+            req.extensions(),
+        )
+        .is_some()
+        {
+            let client_ip = app.inner.proxies.client_ip(peer.ip(), req.headers());
+            req.extensions_mut().insert(crate::ws::Admission {
+                supervisor: conn.sessions.clone(),
+                connection: conn.permit.clone(),
+                client_ip,
+            });
+        }
         // One span per request (OpenTelemetry-compatible via a `tracing` layer). Only the
         // method and path are recorded: never query strings, headers, cookies or bodies.
         let span = tracing::info_span!(
@@ -127,6 +261,9 @@ async fn serve_conn<A: AppSpec>(
         b.http1()
             .timer(hyper_util::rt::TokioTimer::new())
             .header_read_timeout(header_timeout);
+        // RFC 8441: let HTTP/2 clients open WebSockets with Extended CONNECT.
+        #[cfg(feature = "websocket")]
+        b.http2().enable_connect_protocol();
         b
     };
     #[cfg(feature = "http2")]
@@ -154,12 +291,20 @@ pub struct Server {
     addr: SocketAddr,
     shutdown: Option<tokio::sync::oneshot::Sender<()>>,
     join: tokio::task::JoinHandle<std::io::Result<()>>,
+    #[cfg(feature = "websocket")]
+    ws: Arc<crate::ws::WsCounters>,
 }
 
 impl Server {
     /// The bound address.
     pub fn local_addr(&self) -> SocketAddr {
         self.addr
+    }
+
+    /// A snapshot of the app's WebSocket counters (`websocket` feature).
+    #[cfg(feature = "websocket")]
+    pub fn ws_stats(&self) -> crate::ws::WsStats {
+        self.ws.snapshot()
     }
 
     /// Triggers graceful shutdown and waits for it to finish.

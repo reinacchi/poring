@@ -22,7 +22,9 @@ pub fn status_of(raw: &str) -> u16 {
         .unwrap_or(0)
 }
 
+pub mod auth;
 pub mod secure;
+#[cfg(feature = "json")]
 pub mod shop;
 
 /// Compares `actual` with `tests/snapshots/{name}`. Line endings are normalised, so a

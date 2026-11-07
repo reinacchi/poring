@@ -254,8 +254,9 @@ pub(super) fn plan<A: AppSpec>(
         levels.push(("route", d.policy.level()));
         let reads_body = d.extractors.iter().any(|e| e.consumes_body);
         let uses_principal = d.extractors.iter().any(|e| e.uses_principal);
-        let policy = resolve_levels(ctx, &levels, d.method, reads_body, uses_principal)
+        let mut policy = resolve_levels(ctx, &levels, d.method, reads_body, uses_principal)
             .map_err(|e| StartupError::Policy(format!("{} {path}", d.method.as_str()), e))?;
+        policy.websocket = d.websocket;
         let id = crate::contract::route_id(d.method.as_str(), &path);
         let group_label = r.group.map(|g| format!("macro#{g}"));
         let rate = scopes.route_rate(&policy, &id, group_label.as_deref());
@@ -369,8 +370,12 @@ pub(super) fn plan<A: AppSpec>(
         }
         levels.push(("route", route_policy.level().map_err(route_err)?));
         let uses_principal = r.extractors.iter().any(|e| e.uses_principal);
-        let policy = resolve_levels(ctx, &levels, r.method, r.reads_body, uses_principal)
+        let mut policy = resolve_levels(ctx, &levels, r.method, r.reads_body, uses_principal)
             .map_err(route_err)?;
+        policy.websocket = r
+            .extractors
+            .iter()
+            .any(|e| e.kind == ExtractorKind::WebSocket);
         let id = crate::contract::route_id(r.method.as_str(), &path);
         let group_label = gi.map(|g| format!("fluent#{g}"));
         let rate = scopes.route_rate(&policy, &id, group_label.as_deref());

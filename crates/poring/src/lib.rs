@@ -69,6 +69,8 @@ pub mod response;
 pub mod router;
 pub mod schema;
 pub mod testing;
+#[cfg(feature = "tls-rustls")]
+pub mod tls;
 #[cfg(feature = "wasm")]
 pub mod wasm;
 #[cfg(feature = "websocket")]
@@ -131,7 +133,7 @@ pub mod __private {
     pub use crate::policy::check::check_app;
     pub use crate::policy::{
         AuthSpec, Authenticator, CsrfSpec, NoAuth, PolicySpec, RateKey, RateLimitSpec, RateScope,
-        TimeoutSpec,
+        TimeoutSpec, WsOriginsSpec,
     };
     pub use crate::response::describe::{
         DescribeFallback, DescribeResponse, DescribeViaTrait, Probe,

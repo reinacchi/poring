@@ -12,7 +12,8 @@ documentation = "https://docs.rs/poring"
 readme = "../../README.md"
 keywords = ["web", "http", "framework", "security", "wasm"]
 categories = ["web-programming::http-server", "network-programming", "wasm"]
-exclude = ["tests/cli.rs"]
+# Tests are not part of the published crate.
+exclude = ["tests/"]
 
 [features]
 default = ["json", "trace-flow", "openapi"]
@@ -25,7 +26,7 @@ openapi = []
 ## HTTP/2 alongside HTTP/1.1.
 http2 = ["hyper/http2", "hyper-util/http2", "hyper-util/server-auto"]
 ## Typed WebSocket routes.
-websocket = ["dep:tokio-tungstenite", "dep:futures-util"]
+websocket = ["dep:tokio-tungstenite", "dep:futures-util", "dep:data-encoding"]
 ## `Multipart` extractor with size and part-count limits.
 multipart = ["dep:multer", "dep:futures-util"]
 ## Sandboxed Wasm component guest routes (Wasmtime).
@@ -34,6 +35,9 @@ wasm = ["dep:wasmtime", "dep:arc-swap", "dep:sha2"]
 hot-reload = ["wasm", "dep:notify"]
 ## Build guest components from core WAT or Wasm modules.
 guest-kit = ["wasm", "dep:wat", "dep:wit-component", "dep:wit-parser"]
+## Native TLS (HTTPS/WSS) with rustls and the ring crypto provider: `poring::tls`,
+## `App::bind_tls`, `App::serve_tls`. ALPN offers `h2` too when `http2` is enabled.
+tls-rustls = ["dep:tokio-rustls"]
 ## The `cargo-poring` command-line tool.
 cli = ["wasm", "hot-reload", "guest-kit", "dep:tracing-subscriber"]
 
@@ -65,6 +69,8 @@ thiserror = { workspace = true }
 getrandom = "0.4"
 smallvec = "1"
 tokio-tungstenite = { version = "0.30", optional = true, default-features = false, features = ["handshake"] }
+data-encoding = { version = "2.6", optional = true }
+tokio-rustls = { version = "0.26", optional = true, default-features = false, features = ["ring", "tls12", "logging"] }
 futures-util = { version = "0.3", optional = true, default-features = false, features = ["sink", "std"] }
 multer = { version = "3", optional = true }
 wasmtime = { version = "50.0.1", optional = true, default-features = false, features = ["runtime", "cranelift", "component-model", "std", "anyhow", "parallel-compilation"] }
@@ -78,6 +84,7 @@ tracing-subscriber = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }
+proptest = "1.12"
 
 [package.metadata.docs.rs]
 all-features = true

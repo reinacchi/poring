@@ -54,6 +54,12 @@ pub struct EffectivePolicy {
     pub cors: bool,
     /// Route reads the request body (enables the body gate).
     pub reads_body: bool,
+    /// Route serves WebSocket handshakes (enables the `ws_origin` check). Set by the
+    /// planner from the route declaration; [`resolve()`] leaves it `false`.
+    pub websocket: bool,
+    /// WebSocket origins declared by the most specific level (`None`: the app's
+    /// `.ws_origins(..)` configuration applies).
+    pub ws_origins: Option<crate::policy::WsOrigins>,
     /// Provenance lines for `explain`.
     pub provenance: Vec<String>,
 }
@@ -69,6 +75,9 @@ impl EffectivePolicy {
         // them is keyed by principal.
         let by_principal = principal(self.rate_limit) || principal(self.rate_limit_ceiling);
         let limited = self.rate_limit.is_some() || self.rate_limit_ceiling.is_some();
+        if self.websocket {
+            c.push("ws_origin".to_owned());
+        }
         if self.cors {
             c.push("cors".to_owned());
         }
@@ -126,6 +135,7 @@ impl EffectivePolicy {
             rate_limit_ceiling: self
                 .rate_limit_ceiling
                 .map(|r| rate_limit_view(&r, "app ceiling")),
+            ws_origins: self.ws_origins.as_ref().map(crate::policy::WsOrigins::view),
             provenance: self.provenance.clone(),
             checks: self.checks(),
         }
@@ -204,6 +214,7 @@ pub(crate) fn resolve_levels(
     let mut timeout = TimeoutSpec::Inherit;
     let mut timeout_src = "default";
     let mut rate: Option<(RateLimitSpec, &str)> = None;
+    let mut ws_origins: Option<(&crate::policy::WsOrigins, &str)> = None;
     let last = levels.len().saturating_sub(1);
     let mut inherited_reqs = false;
 
@@ -256,7 +267,19 @@ pub(crate) fn resolve_levels(
         if let Some(r) = p.rate_limit {
             rate = Some((r, name));
         }
+        if let Some(o) = &p.ws_origins {
+            ws_origins = Some((o, name));
+        }
     }
+    let ws_origins = match ws_origins {
+        Some((o, src)) => {
+            crate::policy::ws_origin::WsOriginPolicy::from_config(o, app.auth_uses_cookies)
+                .map_err(|e| format!("{src}: {e}"))?;
+            prov.push(format!("ws_origins={:?} <- {src}", o.view()));
+            Some(o.clone())
+        }
+        None => None,
+    };
 
     let (auth_required, public_reason, implicit_public) = match auth {
         LevelAuth::Inherit => {
@@ -399,6 +422,8 @@ pub(crate) fn resolve_levels(
         rate_limit_ceiling,
         cors: app.cors,
         reads_body,
+        websocket: false,
+        ws_origins,
         provenance: prov,
     })
 }

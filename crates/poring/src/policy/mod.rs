@@ -14,12 +14,15 @@ pub mod enforce;
 pub mod proxy;
 pub mod rate_limit;
 pub mod resolve;
+pub(crate) mod ws_origin;
 
 pub use auth::{AuthError, AuthRequest, Authenticator, Credential, Identity, NoAuth};
 pub use owned::{Cors, Policy};
 pub use proxy::TrustedProxies;
 pub use rate_limit::{RateLimit, RateLimitDecision, RateLimitStatus, RateScope};
 pub use resolve::{CsrfMode, EffectivePolicy, resolve};
+pub use ws_origin::WsOrigins;
+// `WsOriginsSpec` is defined in this module (next to `PolicySpec`).
 
 mod owned;
 pub(crate) use owned::{Level, LevelAuth, LevelCsrf, LevelKind};
@@ -150,6 +153,22 @@ pub struct PolicySpec {
     pub timeout: TimeoutSpec,
     /// Rate limit (most specific level wins).
     pub rate_limit: Option<RateLimitSpec>,
+    /// Origins allowed to open WebSocket connections (most specific level wins).
+    pub ws_origins: WsOriginsSpec,
+}
+
+/// WebSocket handshake origins declared at one level (`policy(ws_origins = ..)`).
+///
+/// Same-origin handshakes, handshakes without `Origin` and origins listed explicitly in the
+/// app's CORS configuration are always accepted; see [`WsOrigins`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WsOriginsSpec {
+    /// Not declared; inherit (ultimately the app's `.ws_origins(..)` configuration).
+    Inherit,
+    /// `ws_origins = any`: no origin check. Rejected with a cookie-capable authenticator.
+    Any,
+    /// `ws_origins = ["https://a.example", ..]`: these origins in addition to same-origin.
+    Allow(&'static [&'static str]),
 }
 
 impl PolicySpec {
@@ -164,6 +183,7 @@ impl PolicySpec {
         csrf: CsrfSpec::Inherit,
         timeout: TimeoutSpec::Inherit,
         rate_limit: None,
+        ws_origins: WsOriginsSpec::Inherit,
     };
 
     /// Borrowed view used by the resolver.
@@ -186,6 +206,11 @@ impl PolicySpec {
             },
             timeout: self.timeout,
             rate_limit: self.rate_limit,
+            ws_origins: match self.ws_origins {
+                WsOriginsSpec::Inherit => None,
+                WsOriginsSpec::Any => Some(WsOrigins::any()),
+                WsOriginsSpec::Allow(list) => Some(WsOrigins::new().allow(list.iter().copied())),
+            },
         }
     }
 }

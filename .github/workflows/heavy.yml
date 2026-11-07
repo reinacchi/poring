@@ -1,0 +1,70 @@
+name: heavy
+# Slow, heavyweight verification that would make every pull request expensive: the Wasm
+# feature family (Wasmtime), `--all-features`, the standalone wasm32 guest, the CLI demo
+# and package validation. Runs weekly, on demand, and on release tags.
+on:
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: read
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  wasm-features:
+    name: poring --features ${{ matrix.features }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        features: [wasm, hot-reload, guest-kit, cli]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with: { toolchain: "1.97.0" }
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check -p poring --all-targets --no-default-features --features ${{ matrix.features }}
+      - run: cargo test -p poring --no-default-features --features ${{ matrix.features }}
+
+  wasm-tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with: { toolchain: "1.97.0", targets: "wasm32-unknown-unknown" }
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test -p poring-tests --no-default-features --features wasm-guests
+      # Hot reload demo: guest replaced in a running host; a broken artefact is rejected.
+      - run: bash scripts/wasm_demo.sh
+      # The standalone Rust guest (not a workspace member).
+      - run: cargo build --release --target wasm32-unknown-unknown
+        working-directory: examples/wasm-guest
+
+  all-features:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with: { toolchain: "1.97.0", components: "clippy" }
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm install -g typescript@7
+      - run: cargo clippy -p poring --all-targets --all-features -- -D warnings
+      - run: cargo test --workspace --all-features
+      - run: cargo doc --workspace --all-features --no-deps
+        env: { RUSTDOCFLAGS: "-D warnings" }
+
+  package:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with: { toolchain: "1.97.0" }
+      - run: cargo package -p poring-macros
+      # `poring` depends on the published `poring-macros`; listing the package contents
+      # validates the manifest without requiring that version on crates.io.
+      - run: cargo package -p poring --list

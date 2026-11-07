@@ -44,6 +44,44 @@ macro_rules! route_methods {
             ))
         }
 
+        /// Registers a WebSocket route: a `GET` route for the HTTP/1.1 upgrade that, with the
+        /// `http2` feature, is also reachable through HTTP/2 Extended CONNECT (RFC 8441). It
+        /// goes through the same policy pipeline as every route (origin check, rate limit,
+        /// authentication, authorization, hooks).
+        ///
+        /// # Panics
+        ///
+        /// If the handler does not take a [`WebSocketUpgrade`](crate::ws::WebSocketUpgrade)
+        /// extractor.
+        #[cfg(feature = "websocket")]
+        #[track_caller]
+        pub fn ws<H, Args>(self, path: &str, handler: H) -> Self
+        where
+            H: $crate::handler::Handler<Args, $S>,
+            Args: 'static,
+        {
+            const {
+                assert!(
+                    !<H as $crate::handler::Handler<Args, $S>>::READS_BODY,
+                    "poring: WebSocket handlers cannot read the request body"
+                )
+            };
+            let route = $crate::handler::NativeRoute::new(
+                $crate::descriptor::Method::Get,
+                path,
+                None,
+                handler,
+            );
+            assert!(
+                route
+                    .extractors
+                    .iter()
+                    .any(|e| e.kind == $crate::descriptor::ExtractorKind::WebSocket),
+                "poring: `ws(\"{path}\")` handlers must take a `WebSocketUpgrade` extractor"
+            );
+            self.push_route(route)
+        }
+
         /// Registers a `POST` route.
         #[track_caller]
         pub fn post<H, Args>(self, path: &str, handler: H) -> Self

@@ -120,6 +120,7 @@ impl<Au: Authenticator> Poring<(), Au> {
                 trusted_proxies: self.cfg.trusted_proxies,
                 legacy_forwarded_for: self.cfg.legacy_forwarded_for,
                 rate_limit_ceiling: self.cfg.rate_limit_ceiling,
+                ws_origins: self.cfg.ws_origins,
             },
         }
     }

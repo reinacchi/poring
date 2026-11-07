@@ -7,7 +7,7 @@
 
 use std::time::Duration;
 
-use super::{RateKey, RateLimit, RateLimitSpec, RateScope, TimeoutSpec};
+use super::{RateKey, RateLimit, RateLimitSpec, RateScope, TimeoutSpec, WsOrigins};
 
 /// Authentication requirement of one borrowed level.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -38,6 +38,7 @@ pub(crate) struct Level<'a> {
     pub(crate) csrf: LevelCsrf<'a>,
     pub(crate) timeout: TimeoutSpec,
     pub(crate) rate_limit: Option<RateLimitSpec>,
+    pub(crate) ws_origins: Option<WsOrigins>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -84,6 +85,7 @@ pub struct Policy {
     csrf: Csrf,
     timeout: Option<TimeoutSpec>,
     rate_limit: Option<RateLimit>,
+    ws_origins: Option<WsOrigins>,
 }
 
 impl Policy {
@@ -256,6 +258,15 @@ impl Policy {
         Ok(())
     }
 
+    /// Origins allowed to open WebSocket connections on the routes under this level,
+    /// replacing the app's `.ws_origins(..)` list (the most specific level wins).
+    /// Same-origin and explicit CORS origins stay allowed. Invalid entries, and
+    /// [`WsOrigins::any`] with a cookie-capable authenticator, are reported by `build()`.
+    pub fn ws_origins(mut self, origins: WsOrigins) -> Self {
+        self.ws_origins = Some(origins);
+        self
+    }
+
     /// The resolver's view. Fails on an invalid rate limit (see [`Policy::validate`]).
     pub(crate) fn level(&self) -> Result<Level<'_>, String> {
         let rate_limit = match self.rate_limit {
@@ -280,6 +291,7 @@ impl Policy {
             },
             timeout: self.timeout.unwrap_or(TimeoutSpec::Inherit),
             rate_limit,
+            ws_origins: self.ws_origins.clone(),
         })
     }
 
@@ -306,6 +318,7 @@ impl Policy {
             },
             timeout: (p.timeout != TimeoutSpec::Inherit).then_some(p.timeout),
             rate_limit: p.rate_limit.as_ref().map(RateLimit::from_spec),
+            ws_origins: p.level().ws_origins,
         }
     }
 }

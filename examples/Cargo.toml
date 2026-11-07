@@ -8,12 +8,18 @@ license.workspace = true
 publish = false
 
 [features]
-default = ["wasm"]
+default = ["json", "trace-flow", "openapi", "websocket", "wasm"]
+json = ["poring/json"]
+trace-flow = ["poring/trace-flow"]
+openapi = ["poring/openapi"]
+websocket = ["poring/websocket"]
 ## The `wasm_live` example (Wasmtime, hot reload and the guest kit).
 wasm = ["poring/wasm", "poring/hot-reload", "poring/guest-kit"]
 
 [dependencies]
-poring = { workspace = true, features = ["websocket", "multipart"] }
+# Features come only from this package's features above (no implicit Poring features), so
+# `--no-default-features --features X` builds exactly the examples that X supports.
+poring = { workspace = true, default-features = false }
 tokio = { workspace = true, features = ["full"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -27,32 +33,38 @@ path = "hello.rs"
 [[example]]
 name = "path_query"
 path = "path_query.rs"
+required-features = ["json"]
 
 [[example]]
 name = "json_crud"
 path = "json_crud.rs"
+required-features = ["json"]
 
 [[example]]
 name = "websocket_echo"
 path = "websocket_echo.rs"
+required-features = ["websocket"]
 
 [[example]]
 name = "plugins"
 path = "plugins.rs"
+required-features = ["json", "openapi"]
 
 [[example]]
 name = "secure_admin"
 path = "secure_admin.rs"
 test = true
+required-features = ["json"]
 
 [[example]]
 name = "tracing_graph"
 path = "tracing_graph.rs"
+required-features = ["json", "trace-flow"]
 
 [[example]]
 name = "wasm_live"
 path = "wasm_live.rs"
-required-features = ["wasm"]
+required-features = ["wasm", "json", "trace-flow"]
 
 [[example]]
 name = "quickstart"
@@ -61,6 +73,7 @@ path = "quickstart.rs"
 [[example]]
 name = "fluent_json"
 path = "fluent_json.rs"
+required-features = ["json"]
 
 [[example]]
 name = "attribute_macros"
@@ -69,6 +82,7 @@ path = "attribute_macros.rs"
 [[example]]
 name = "fluent_api"
 path = "fluent_api.rs"
+required-features = ["json"]
 
 [[example]]
 name = "rate_limits"
@@ -77,3 +91,9 @@ path = "rate_limits.rs"
 [[example]]
 name = "bench_server"
 path = "bench_server.rs"
+required-features = ["json"]
+
+[[example]]
+name = "websocket_managed"
+path = "websocket_managed.rs"
+required-features = ["websocket"]

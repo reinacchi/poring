@@ -8,20 +8,35 @@ license.workspace = true
 publish = false
 
 [features]
-default = ["wasm-guests"]
-## Wasm guest, sandbox and hot-reload tests (Wasmtime and the guest kit). Enabled by
-## default for local runs; core CI runs with `--no-default-features`.
-wasm-guests = ["poring/wasm", "poring/hot-reload", "poring/guest-kit"]
+# Everyday local runs: every lightweight feature plus the Wasm guest tests.
+default = ["full", "wasm-guests"]
+## All lightweight Poring features the integration tests exercise. CI runs
+## `--no-default-features --features full` (no Wasm toolchain needed), and single features
+## with `--no-default-features --features <name>` to prove they work in isolation.
+full = ["json", "trace-flow", "openapi", "websocket", "multipart"]
+json = ["poring/json"]
+trace-flow = ["poring/trace-flow"]
+openapi = ["poring/openapi"]
+websocket = ["poring/websocket"]
+multipart = ["poring/multipart"]
+## Wasm guest, sandbox and hot-reload tests (Wasmtime and the guest kit).
+wasm-guests = ["json", "poring/wasm", "poring/hot-reload", "poring/guest-kit"]
+## HTTP/2 server tests (RFC 8441 WebSockets).
+http2 = ["poring/http2"]
+## Native TLS / WSS tests (`poring/tls-rustls`).
+tls = ["poring/tls-rustls"]
 
 [dependencies]
-poring = { workspace = true, features = ["websocket", "multipart"] }
+# No implicit Poring features: every optional feature is selected through the features
+# above, so `--no-default-features --features X` really tests X alone.
+poring = { workspace = true, default-features = false }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 
 [dev-dependencies]
 trybuild = "1.0.122"
-hyper = { workspace = true, features = ["client", "http1"] }
+hyper = { workspace = true, features = ["client", "http1", "http2"] }
 hyper-util = { workspace = true, features = ["client-legacy", "http1", "tokio"] }
 http-body-util = { workspace = true }
 bytes = { workspace = true }
@@ -35,6 +50,110 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 tempfile = "3"
 dhat = "0.3"
+rcgen = "0.14"
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+
+# Every integration test declares the Poring features it needs, so a build with fewer
+# features skips it explicitly (cargo prints the skip) instead of failing or silently
+# depending on feature unification.
+
+[[test]]
+name = "alloc_budget"
+
+[[test]]
+name = "composition"
+required-features = ["json"]
+
+[[test]]
+name = "contract"
+required-features = ["json", "openapi"]
+
+[[test]]
+name = "fluent"
+required-features = ["json", "openapi", "trace-flow"]
+
+[[test]]
+name = "fluent_security"
+required-features = ["json"]
+
+[[test]]
+name = "hot_path"
+required-features = ["json"]
+
+[[test]]
+name = "http_core"
+required-features = ["json"]
+
+[[test]]
+name = "properties"
+required-features = ["json"]
+
+[[test]]
+name = "rate_limit"
+
+[[test]]
+name = "security"
+required-features = ["json"]
+
+[[test]]
+name = "trace_events"
+required-features = ["json"]
+
+[[test]]
+name = "trace_flow"
+required-features = ["json", "trace-flow"]
+
+[[test]]
+name = "tracing_parity"
+
+[[test]]
+name = "readme"
+
+[[test]]
+name = "ui"
+
+[[test]]
+name = "versions"
+
+[[test]]
+name = "multipart"
+required-features = ["multipart"]
+
+[[test]]
+name = "ws_typed"
+required-features = ["websocket"]
+
+[[test]]
+name = "ws_security"
+required-features = ["websocket"]
+
+[[test]]
+name = "ws_lifecycle"
+required-features = ["websocket"]
+
+[[test]]
+name = "ws_stress"
+required-features = ["websocket"]
+
+[[test]]
+name = "ws_limits"
+required-features = ["websocket"]
+
+[[test]]
+name = "ws_api"
+required-features = ["websocket"]
+
+[[test]]
+name = "ws_alloc"
+required-features = ["websocket"]
+
+[[test]]
+name = "ws_h2"
+required-features = ["websocket", "http2"]
+
+[[test]]
+name = "tls"
+required-features = ["websocket", "tls"]
 
 [[test]]
 name = "wasm_guest"

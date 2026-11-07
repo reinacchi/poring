@@ -7,7 +7,8 @@ members = [
     "tests",
 ]
 # The example Wasm guest targets wasm32 and is built on its own.
-exclude = ["examples/wasm-guest"]
+# The WebSocket benchmark pulls in Axum and keeps its own lockfile.
+exclude = ["examples/wasm-guest", "benches/ws-bench"]
 
 [workspace.package]
 edition = "2024"
