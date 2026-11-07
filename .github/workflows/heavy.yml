@@ -1,7 +1,8 @@
 name: heavy
 # Slow, heavyweight verification that would make every pull request expensive: the Wasm
 # feature family (Wasmtime), `--all-features`, the standalone wasm32 guest, the CLI demo
-# and package validation. Runs weekly, on demand, and on release tags.
+# and package validation. Runs weekly, on demand (Actions > heavy > Run workflow), and on
+# release tags. Commands live in scripts/verify-ci.sh (`scripts/verify-ci.sh heavy`).
 on:
   schedule:
     - cron: "17 3 * * 1"
@@ -12,6 +13,7 @@ permissions:
   contents: read
 env:
   CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
 
 jobs:
   wasm-features:
@@ -22,49 +24,39 @@ jobs:
       matrix:
         features: [wasm, hot-reload, guest-kit, cli]
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@master
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
         with: { toolchain: "1.97.0" }
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo check -p poring --all-targets --no-default-features --features ${{ matrix.features }}
-      - run: cargo test -p poring --no-default-features --features ${{ matrix.features }}
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: bash scripts/verify-ci.sh --fail-fast wasm-features "${{ matrix.features }}"
 
   wasm-tests:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@master
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
         with: { toolchain: "1.97.0", targets: "wasm32-unknown-unknown" }
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo test -p poring-tests --no-default-features --features wasm-guests
-      # Hot reload demo: guest replaced in a running host; a broken artefact is rejected.
-      - run: bash scripts/wasm_demo.sh
-      # The standalone Rust guest (not a workspace member).
-      - run: cargo build --release --target wasm32-unknown-unknown
-        working-directory: examples/wasm-guest
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      # Wasm guest tests, the hot-reload demo (guest replaced in a running host; a broken
+      # artefact is rejected) and the standalone Rust guest (not a workspace member).
+      - run: bash scripts/verify-ci.sh --fail-fast wasm-tests
 
   all-features:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@master
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
         with: { toolchain: "1.97.0", components: "clippy" }
-      - uses: Swatinem/rust-cache@v2
-      - uses: actions/setup-node@v4
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with: { node-version: 22 }
-      - run: npm install -g typescript@7
-      - run: cargo clippy -p poring --all-targets --all-features -- -D warnings
-      - run: cargo test --workspace --all-features
-      - run: cargo doc --workspace --all-features --no-deps
-        env: { RUSTDOCFLAGS: "-D warnings" }
+      - run: npm install -g typescript@7.0.2
+      - run: bash scripts/verify-ci.sh --fail-fast all-features
 
   package:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@master
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
         with: { toolchain: "1.97.0" }
-      - run: cargo package -p poring-macros
-      # `poring` depends on the published `poring-macros`; listing the package contents
-      # validates the manifest without requiring that version on crates.io.
-      - run: cargo package -p poring --list
+      - run: bash scripts/verify-ci.sh --fail-fast package

@@ -29,7 +29,7 @@ tls = ["poring/tls-rustls"]
 [dependencies]
 # No implicit Poring features: every optional feature is selected through the features
 # above, so `--no-default-features --features X` really tests X alone.
-poring = { workspace = true, default-features = false }
+poring = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
@@ -107,7 +107,10 @@ required-features = ["json", "trace-flow"]
 name = "tracing_parity"
 
 [[test]]
+# The trybuild cases use `Json` and the flow-graph macros; the `.stderr` snapshots record
+# the diagnostics of that feature set (on the pinned toolchain, see ci.yml).
 name = "ui"
+required-features = ["json", "trace-flow"]
 
 [[test]]
 name = "versions"
@@ -135,6 +138,14 @@ required-features = ["websocket"]
 [[test]]
 name = "ws_limits"
 required-features = ["websocket"]
+
+[[test]]
+name = "ws_reliability"
+required-features = ["websocket"]
+
+[[test]]
+# HTTP/1.1 always; the HTTP/2, TLS and WebSocket cases run when those features are on.
+name = "shutdown"
 
 [[test]]
 name = "ws_api"

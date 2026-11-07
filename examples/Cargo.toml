@@ -19,7 +19,7 @@ wasm = ["poring/wasm", "poring/hot-reload", "poring/guest-kit"]
 [dependencies]
 # Features come only from this package's features above (no implicit Poring features), so
 # `--no-default-features --features X` builds exactly the examples that X supports.
-poring = { workspace = true, default-features = false }
+poring = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 serde = { workspace = true }
 serde_json = { workspace = true }

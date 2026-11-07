@@ -19,7 +19,9 @@ repository = "https://github.com/reinacchi/poring"
 homepage = "https://github.com/reinacchi/poring"
 
 [workspace.dependencies]
-poring = { path = "crates/poring", version = "0.1.2" }
+# Members opt into Poring features explicitly (Cargo 1.97 rejects a member-level
+# `default-features = false` unless the workspace entry disables defaults too).
+poring = { path = "crates/poring", version = "0.1.2", default-features = false }
 poring-macros = { path = "crates/poring-macros", version = "=0.1.1" }
 
 tokio = { version = "1.54", default-features = false }

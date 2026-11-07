@@ -12,6 +12,10 @@
 //!   [`WsOrigins::allow`]: allowed.
 //! * anything else — another origin, `null`, a malformed value, several `Origin`
 //!   headers, or an origin only matched by the CORS wildcard `*` — is rejected with 403.
+//!   The `Origin` value is validated *before* any allowlist is consulted, so listing
+//!   `"null"` (or any non-origin string) in the HTTP CORS configuration never admits a
+//!   WebSocket handshake. Opaque origins cannot be allowed except through
+//!   [`WsOrigins::any`], which `build()` refuses for cookie-capable authenticators.
 //!
 //! Same-origin comparison is ASCII case-insensitive on scheme and host, and an origin
 //! without a port uses its scheme's default (80 / 443). When `Host` has no port, any
@@ -198,12 +202,17 @@ pub(crate) fn origin_allowed(
     let Ok(origin) = origin.to_str() else {
         return false;
     };
-    if cors.is_some_and(|c| c.allows_explicit(origin)) {
-        return true;
-    }
-    let Some(origin) = parse_origin(origin) else {
+    // Validate before consulting any allowlist: an opaque (`null`) or malformed origin is
+    // never allowed, even if the HTTP CORS configuration lists it verbatim — a sandboxed
+    // iframe or a `data:` page sends `Origin: null` and would otherwise ride the user's
+    // cookies.
+    let raw = origin;
+    let Some(origin) = parse_origin(raw) else {
         return false;
     };
+    if cors.is_some_and(|c| c.allows_explicit(raw)) {
+        return true;
+    }
     if policy.allowed.iter().any(|(secure, host, port)| {
         *secure == origin.secure && *port == origin.port && host.eq_ignore_ascii_case(origin.host)
     }) {
@@ -326,6 +335,20 @@ fn parse_origin(s: &str) -> Option<Origin<'_>> {
         return None;
     };
     let (host, port) = split_host_port(rest)?;
+    // A serialised origin carries an ASCII (punycode) host: a DNS name or a bracketed IPv6
+    // literal. Anything else (percent escapes, `_`, empty labels) cannot be same-site with
+    // a browser origin and is rejected rather than canonicalised.
+    let ok_host = match host.strip_prefix('[') {
+        Some(v6) => v6
+            .strip_suffix(']')
+            .is_some_and(|a| a.parse::<std::net::Ipv6Addr>().is_ok()),
+        None => host
+            .split('.')
+            .all(|l| !l.is_empty() && l.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')),
+    };
+    if !ok_host {
+        return None;
+    }
     Some(Origin {
         secure: default_port == 443,
         host,
@@ -428,6 +451,19 @@ mod tests {
         assert!(!allowed(&[("host", "a.test"), ("origin", "null")]));
         assert!(!allowed(&[
             ("host", "a.test"),
+            ("origin", "http://a.test.")
+        ]));
+        assert!(!allowed(&[
+            ("host", "a_b.test"),
+            ("origin", "http://a_b.test")
+        ]));
+        assert!(!allowed(&[
+            ("host", "a.test"),
+            ("origin", "http://a..test")
+        ]));
+        assert!(!allowed(&[("host", "[::1]"), ("origin", "http://[zz]")]));
+        assert!(!allowed(&[
+            ("host", "a.test"),
             ("origin", "http://a.test/")
         ]));
         assert!(!allowed(&[
@@ -468,5 +504,28 @@ mod tests {
             &TrustedProxies::default(),
             None
         ));
+    }
+
+    #[test]
+    fn cors_allowlist_never_admits_opaque_or_malformed_origins() {
+        let cors = CorsRuntime::from_cors(&crate::policy::Cors::new().origins([
+            "null",
+            "not an origin",
+            "https://ok.test",
+        ]));
+        let check = |origin: &str| {
+            origin_allowed(
+                &h(&[("host", "a.test"), ("origin", origin)]),
+                &http::Uri::from_static("/ws"),
+                Some(&cors),
+                &WsOriginPolicy::default(),
+                &TrustedProxies::default(),
+                None,
+            )
+        };
+        assert!(!check("null"));
+        assert!(!check("not an origin"));
+        assert!(check("https://ok.test"));
+        assert!(!check("https://other.test"));
     }
 }

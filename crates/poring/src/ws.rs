@@ -50,14 +50,16 @@ use crate::schema::PoringSchema;
 
 /// Server-owned supervisor of the upgraded sessions of one listener (one `serve` call).
 ///
-/// Sessions are admitted against `Limits::max_ws_sessions` before `101`, run in a
-/// [`tokio::task::JoinSet`] owned here (never detached), and hold their session permit and
-/// their TCP connection permit until they end — normally, by error, by panic or by
-/// cancellation. On shutdown the supervisor stops admitting, and lingering sessions are
-/// aborted after the grace period.
+/// Sessions are admitted against `Limits::max_ws_sessions` before `101`, run as tasks
+/// owned here (never detached: see [`crate::app::tasks::TaskTracker`]), and hold their
+/// session permit and their TCP connection permit until they end — normally, by error, by
+/// panic or by cancellation. A finished session is removed from the set as it ends, so
+/// completed tasks are never retained, even when no further handshake arrives. On shutdown
+/// the supervisor stops admitting, and lingering sessions are aborted after the grace
+/// period.
 pub(crate) struct Supervisor {
     sessions: std::sync::Arc<tokio::sync::Semaphore>,
-    state: std::sync::Mutex<SupervisorState>,
+    tasks: crate::app::tasks::TaskTracker,
     /// Flips to `true` once shutdown begins (observed by [`WsShutdown`]).
     stop: tokio::sync::watch::Sender<bool>,
     /// Live sessions per client IP / principal, for the per-client caps. Only touched when
@@ -94,18 +96,19 @@ impl Drop for KeyHold {
     }
 }
 
-struct SupervisorState {
-    closed: bool,
-    tasks: tokio::task::JoinSet<()>,
-}
-
 impl Supervisor {
+    /// `max_sessions` is taken literally: `0` admits no session at all (every handshake is
+    /// refused with `503`). Values above [`tokio::sync::Semaphore::MAX_PERMITS`] mean
+    /// "unlimited" and are clamped to it.
     pub(crate) fn new(max_sessions: usize, counters: std::sync::Arc<WsCounters>) -> Self {
+        let panics = counters.clone();
         Supervisor {
-            sessions: std::sync::Arc::new(tokio::sync::Semaphore::new(max_sessions.max(1))),
-            state: std::sync::Mutex::new(SupervisorState {
-                closed: false,
-                tasks: tokio::task::JoinSet::new(),
+            sessions: std::sync::Arc::new(tokio::sync::Semaphore::new(
+                max_sessions.min(tokio::sync::Semaphore::MAX_PERMITS),
+            )),
+            tasks: crate::app::tasks::TaskTracker::with_panic_hook(move || {
+                panics.note(WsEvent::Panicked);
+                tracing::warn!("websocket session panicked");
             }),
             stop: tokio::sync::watch::Sender::new(false),
             holders: std::sync::Mutex::new(std::collections::HashMap::new()),
@@ -113,8 +116,8 @@ impl Supervisor {
         }
     }
 
-    /// Counts one more session for `key` unless it already has `max`. `usize::MAX` means
-    /// "no cap" and is not tracked at all.
+    /// Counts one more session for `key` unless it already has `max` (`0` refuses every
+    /// session). `usize::MAX` means "no cap" and is not tracked at all.
     fn hold(
         self: &std::sync::Arc<Self>,
         key: SessionKey,
@@ -138,49 +141,23 @@ impl Supervisor {
         }))
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, SupervisorState> {
-        // The state stays consistent even if a holder panicked (no user code runs under it).
-        self.state.lock().unwrap_or_else(|p| p.into_inner())
-    }
-
-    /// Spawns a session unless the supervisor is closed. Finished sessions are reaped here,
-    /// so the set never holds more than the live sessions plus one.
+    /// Spawns a session unless the supervisor is closed.
     fn spawn(&self, session: impl Future<Output = ()> + Send + 'static) -> bool {
-        let mut st = self.lock();
-        if st.closed {
-            return false;
-        }
-        while let Some(done) = st.tasks.try_join_next() {
-            if let Err(e) = done
-                && e.is_panic()
-            {
-                self.counters.note(WsEvent::Panicked);
-                tracing::warn!("websocket session panicked");
-            }
-        }
-        st.tasks.spawn(session);
-        true
+        self.tasks.spawn(session)
     }
 
     /// Stops admitting new sessions and tells running sessions that shutdown has begun.
     pub(crate) fn close(&self) {
-        self.lock().closed = true;
+        self.tasks.close();
         self.stop.send_replace(true);
     }
 
     /// Closes the supervisor, aborts every remaining session and waits (at most `bound`)
     /// for them to be dropped.
     pub(crate) async fn abort_all(&self, bound: std::time::Duration) {
-        let mut tasks = {
-            let mut st = self.lock();
-            st.closed = true;
-            std::mem::take(&mut st.tasks)
-        };
         self.stop.send_replace(true);
-        let n = tasks.len();
-        tasks.abort_all();
-        let drained =
-            tokio::time::timeout(bound, async { while tasks.join_next().await.is_some() {} }).await;
+        let n = self.tasks.abort_all();
+        let drained = tokio::time::timeout(bound, self.tasks.wait_idle()).await;
         if n > 0 {
             tracing::debug!(sessions = n, "websocket sessions cancelled at shutdown");
         }
@@ -343,7 +320,7 @@ pub struct WsStats {
     pub active_sessions: u64,
     /// Sessions that have ended, however they ended.
     pub sessions_ended: u64,
-    /// Sessions whose handler panicked (counted when the supervisor reaps them).
+    /// Sessions whose handler panicked.
     pub sessions_panicked: u64,
     /// Data messages received / sent (managed and typed sessions).
     pub messages_received: u64,
@@ -366,6 +343,9 @@ pub struct WsStats {
     /// Managed or typed sessions whose peer disappeared without a close handshake (TCP
     /// reset or EOF, HTTP/2 stream reset).
     pub abnormal_disconnects: u64,
+    /// Managed sessions closed because a heartbeat ping was not answered with the matching
+    /// pong within `pong_timeout`.
+    pub heartbeat_timeouts: u64,
 }
 
 /// Rare session events counted directly.
@@ -384,13 +364,14 @@ pub(crate) enum WsEvent {
     LifetimeExpired,
     ShutdownClose,
     AbnormalDisconnect,
+    HeartbeatTimeout,
 }
 
 /// App-wide WebSocket counters: relaxed atomics, touched on handshakes, session start/end
 /// and rare events only (per-message counts are accumulated per session).
 #[derive(Debug, Default)]
 pub(crate) struct WsCounters {
-    events: [std::sync::atomic::AtomicU64; 13],
+    events: [std::sync::atomic::AtomicU64; 14],
     active: std::sync::atomic::AtomicU64,
     ended: std::sync::atomic::AtomicU64,
     messages_received: std::sync::atomic::AtomicU64,
@@ -430,6 +411,7 @@ impl WsCounters {
             lifetime_expired: self.event(WsEvent::LifetimeExpired),
             shutdown_closes: self.event(WsEvent::ShutdownClose),
             abnormal_disconnects: self.event(WsEvent::AbnormalDisconnect),
+            heartbeat_timeouts: self.event(WsEvent::HeartbeatTimeout),
         }
     }
 }
@@ -914,8 +896,12 @@ impl WebSocketUpgrade {
         ManagedUpgrade {
             inner: self,
             ping_interval: Some(DEFAULT_PING_INTERVAL),
+            pong_timeout: Some(DEFAULT_PONG_TIMEOUT),
             idle_timeout: Some(DEFAULT_IDLE_TIMEOUT),
             close_timeout: DEFAULT_CLOSE_TIMEOUT,
+            queue_messages: MANAGED_QUEUE,
+            max_outbound_message: DEFAULT_MAX_OUTBOUND,
+            max_queued_bytes: DEFAULT_MAX_OUTBOUND,
         }
     }
 
@@ -1042,18 +1028,29 @@ impl WebSocketUpgrade {
 /// i.e. what a default peer accepts) plus the 16 KiB write-coalescing buffer.
 const DEFAULT_MAX_WRITE_BUFFER: usize = (64 << 20) + 16 * 1024;
 const DEFAULT_PING_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
+const DEFAULT_PONG_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+/// Default per-session outbound byte budget (and per-message limit): 64 MiB, matching what a
+/// default peer accepts inbound.
+const DEFAULT_MAX_OUTBOUND: usize = 64 << 20;
 const DEFAULT_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(75);
 const DEFAULT_CLOSE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
-/// Capacity of each direction's queue between the handler and the I/O pump.
+/// Default capacity (in messages) of each direction's queue between the handler and the
+/// I/O pump.
 const MANAGED_QUEUE: usize = 16;
+/// Largest byte budget a semaphore reservation can express.
+const MAX_BUDGET: usize = u32::MAX as usize;
 
 /// A managed upgrade in progress (see [`WebSocketUpgrade::managed`]).
 #[derive(Debug)]
 pub struct ManagedUpgrade {
     inner: WebSocketUpgrade,
     ping_interval: Option<std::time::Duration>,
+    pong_timeout: Option<std::time::Duration>,
     idle_timeout: Option<std::time::Duration>,
     close_timeout: std::time::Duration,
+    queue_messages: usize,
+    max_outbound_message: usize,
+    max_queued_bytes: usize,
 }
 
 impl ManagedUpgrade {
@@ -1064,9 +1061,60 @@ impl ManagedUpgrade {
         self
     }
 
-    /// Disables server pings.
+    /// Disables server pings (and with them pong enforcement).
     pub fn no_ping(mut self) -> Self {
         self.ping_interval = None;
+        self
+    }
+
+    /// How long the peer has to answer a heartbeat ping with the matching pong (default
+    /// 20 s). Each ping carries a fresh 8-byte challenge; only a pong echoing it counts:
+    /// data messages, pings and unsolicited or stale pongs do not. At most one challenge is
+    /// outstanding, so a tick that finds one still unanswered sends no new ping. When the
+    /// deadline passes the session is closed with `1001` (waiting for the unresponsive
+    /// peer's close reply at most `min(pong_timeout, close_timeout)`) and counted in
+    /// [`WsStats::heartbeat_timeouts`]. While the handler is not taking inbound messages
+    /// (and the pump therefore does not read the socket) the deadline is paused, so a slow
+    /// handler never causes a heartbeat failure.
+    pub fn pong_timeout(mut self, d: std::time::Duration) -> Self {
+        self.pong_timeout = Some(d);
+        self
+    }
+
+    /// Sends heartbeat pings without requiring pongs (liveness then rests on the idle
+    /// timeout alone).
+    pub fn no_pong_timeout(mut self) -> Self {
+        self.pong_timeout = None;
+        self
+    }
+
+    /// Capacity, in messages, of each direction's queue between the handler and the I/O
+    /// pump (default 16; `0` is treated as `1`, since a queue must hold one message).
+    pub fn queue_messages(mut self, n: usize) -> Self {
+        self.queue_messages = n.max(1);
+        self
+    }
+
+    /// Largest message [`ManagedSocket::send`] accepts (default 64 MiB). A larger message
+    /// fails immediately with [`WsError::Socket`] carrying
+    /// `tungstenite::Error::Capacity(MessageTooLong { .. })`, and the session continues.
+    /// The effective limit is never above [`max_queued_bytes`](Self::max_queued_bytes).
+    pub fn max_outbound_message(mut self, n: usize) -> Self {
+        self.max_outbound_message = n;
+        self
+    }
+
+    /// Byte budget of the outbound queue (default 64 MiB, at most `u32::MAX`): the summed
+    /// payload sizes of messages accepted by `send` but not yet written to the socket.
+    /// `send` waits (first come, first served across all senders of the session) while the
+    /// budget is exhausted, and fails once the session has closed. Bytes are returned when
+    /// a message is written or dropped because the session ended; a `send` cancelled while
+    /// waiting reserves nothing. Together with [`queue_messages`](Self::queue_messages)
+    /// this bounds a session's queued outbound memory. Application `Ping`/`Pong` payloads
+    /// count against the budget; close frames and the pump's own heartbeat pings (at most
+    /// 125 bytes each) do not.
+    pub fn max_queued_bytes(mut self, n: usize) -> Self {
+        self.max_queued_bytes = n.min(MAX_BUDGET);
         self
     }
 
@@ -1119,6 +1167,18 @@ impl ManagedUpgrade {
 
     /// Completes the handshake and runs `f` with a [`ManagedSocket`]. The I/O pump and
     /// `f` run concurrently in the same supervised session task.
+    ///
+    /// Lifecycle: the session ends when both sides are done, and never waits on the
+    /// handler indefinitely once the transport is gone.
+    ///
+    /// * The handler returns (or drops every sender): the pump closes with `1000` and the
+    ///   session ends once the close handshake finished (bounded by `close_timeout`).
+    /// * The transport ends first (peer close or disconnect, protocol error, idle or
+    ///   heartbeat timeout, lifetime, shutdown): `recv` returns `None` and `send` fails, and
+    ///   the handler gets `close_timeout` to return; after that it is cancelled (dropped at
+    ///   its next await point). Its permits, queues and buffers are released either way.
+    /// * The handler panics: the panic is caught, counted in
+    ///   [`WsStats::sessions_panicked`], and the peer gets `1011`.
     pub fn on_upgrade<F, Fut>(mut self, f: F) -> Response
     where
         F: FnOnce(ManagedSocket) -> Fut + Send + 'static,
@@ -1126,6 +1186,7 @@ impl ManagedUpgrade {
     {
         let cfg = PumpConfig {
             ping: self.ping_interval.filter(|d| !d.is_zero()),
+            pong: self.pong_timeout.filter(|d| !d.is_zero()),
             idle: self.idle_timeout.filter(|d| !d.is_zero()),
             close: self.close_timeout,
             lifetime: self.inner.max_lifetime.take(),
@@ -1133,31 +1194,136 @@ impl ManagedUpgrade {
         let stop = self.inner.shutdown_signal();
         let client_ip = self.inner.admission.as_ref().map(|a| a.client_ip);
         let gate = self.inner.message_gate(client_ip);
-        let meter = SessionMeter::new(
-            self.inner
-                .admission
-                .as_ref()
-                .map(|a| a.supervisor.counters.clone()),
-        );
+        let counters = self
+            .inner
+            .admission
+            .as_ref()
+            .map(|a| a.supervisor.counters.clone());
+        let meter = SessionMeter::new(counters.clone());
+        let queue = self.queue_messages.max(1);
+        let budget = OutBudget {
+            bytes: std::sync::Arc::new(tokio::sync::Semaphore::new(self.max_queued_bytes)),
+            max_message: self.max_outbound_message.min(self.max_queued_bytes),
+        };
         self.inner.on_upgrade(move |raw| async move {
-            let (in_tx, in_rx) = tokio::sync::mpsc::channel(MANAGED_QUEUE);
-            let (out_tx, out_rx) = tokio::sync::mpsc::channel(MANAGED_QUEUE);
+            let (in_tx, in_rx) = tokio::sync::mpsc::channel(queue);
+            let (out_tx, out_rx) = tokio::sync::mpsc::channel(queue);
+            let (panic_tx, panic_rx) = tokio::sync::oneshot::channel::<()>();
             let sock = ManagedSocket {
                 rx: in_rx,
-                tx: out_tx,
+                tx: OutboundTx {
+                    tx: out_tx,
+                    budget: budget.clone(),
+                },
                 stop: stop.clone(),
             };
             let hard_cap = cfg.lifetime.map(|d| d + cfg.close);
-            let both = async {
-                tokio::join!(pump(raw, out_rx, in_tx, cfg, stop, gate, meter), f(sock));
+            let io = Pump {
+                out_rx,
+                in_tx,
+                cfg,
+                stop,
+                gate,
+                meter,
+                budget: budget.bytes,
+                panicked: panic_rx,
+            };
+            let session = async move {
+                let pump = pump(raw, io);
+                tokio::pin!(pump);
+                let mut handler = crate::app::tasks::CatchUnwind(Box::pin(f(sock)));
+                tokio::select! {
+                    biased;
+                    () = &mut pump => {
+                        // The transport is gone: the handler observes closed queues and
+                        // gets `close_timeout` to return before it is cancelled.
+                        match tokio::time::timeout(cfg.close, &mut handler).await {
+                            Ok(Err(())) => note_panic(counters.as_deref()),
+                            Ok(Ok(())) => {}
+                            Err(_) => tracing::debug!(
+                                "websocket handler still running after its session closed; cancelled"
+                            ),
+                        }
+                    }
+                    r = &mut handler => {
+                        if r.is_err() {
+                            note_panic(counters.as_deref());
+                            let _ = panic_tx.send(());
+                        } else {
+                            drop(panic_tx);
+                        }
+                        // Closes with `1000` once every sender is gone (bounded close).
+                        pump.await;
+                    }
+                }
             };
             match hard_cap {
                 Some(d) => {
-                    let _ = tokio::time::timeout(d, both).await;
+                    let _ = tokio::time::timeout(d, session).await;
                 }
-                None => both.await,
+                None => session.await,
             }
         })
+    }
+}
+
+fn note_panic(counters: Option<&WsCounters>) {
+    if let Some(c) = counters {
+        c.note(WsEvent::Panicked);
+    }
+    tracing::warn!("websocket session handler panicked");
+}
+
+/// Per-session outbound byte budget shared by every sender of the session.
+#[derive(Clone, Debug)]
+struct OutBudget {
+    bytes: std::sync::Arc<tokio::sync::Semaphore>,
+    max_message: usize,
+}
+
+/// Sending side of the outbound queue: a bounded channel plus the byte budget.
+#[derive(Clone, Debug)]
+struct OutboundTx {
+    tx: tokio::sync::mpsc::Sender<Outbound>,
+    budget: OutBudget,
+}
+
+fn closed_error() -> WsError {
+    WsError::Socket(tungstenite::Error::AlreadyClosed)
+}
+
+impl OutboundTx {
+    async fn send(&self, msg: Message) -> Result<(), WsError> {
+        let out = match msg {
+            Message::Close(frame) => Outbound::Close(frame),
+            m => {
+                let len = m.len();
+                if len > self.budget.max_message {
+                    return Err(WsError::Socket(tungstenite::Error::Capacity(
+                        tungstenite::error::CapacityError::MessageTooLong {
+                            size: len,
+                            max_size: self.budget.max_message,
+                        },
+                    )));
+                }
+                // First come, first served across senders; fails once the pump has closed
+                // the budget. A wait cancelled here reserves nothing.
+                let n = u32::try_from(len).map_err(|_| closed_error())?;
+                let reserved = self
+                    .budget
+                    .bytes
+                    .clone()
+                    .acquire_many_owned(n)
+                    .await
+                    .map_err(|_| closed_error())?;
+                Outbound::Message(m, reserved)
+            }
+        };
+        self.tx.send(out).await.map_err(|_| closed_error())
+    }
+
+    async fn close(&self, frame: Option<tungstenite::protocol::CloseFrame>) {
+        let _ = self.tx.send(Outbound::Close(frame)).await;
     }
 }
 
@@ -1165,7 +1331,8 @@ impl ManagedUpgrade {
 ///
 /// Guarantees, independent of how often the handler calls [`recv`](Self::recv):
 ///
-/// * pings are sent every `ping_interval` and pongs (and pings) from the peer are handled;
+/// * pings are sent every `ping_interval`, and a ping whose matching pong does not arrive
+///   within `pong_timeout` closes the session with `1001`;
 /// * a peer that sends nothing for `idle_timeout` is closed with `1001`;
 /// * `max_lifetime` and server shutdown close the session with `1001`;
 /// * when the handler returns or drops the socket, the session closes with `1000`;
@@ -1174,21 +1341,24 @@ impl ManagedUpgrade {
 /// * invalid UTF-8 fails the session with `1007`, an oversized message with `1009`, and any
 ///   other protocol violation with `1002`, without waiting for a reply.
 ///
-/// Inbound and outbound messages pass through bounded queues of 16 messages: a handler
-/// that stops reading eventually stops the pump from reading data (pings are still sent and
-/// the idle timer is paused meanwhile), and `send` waits when 16 messages are queued.
+/// Inbound and outbound messages pass through bounded queues (16 messages by default, see
+/// [`ManagedUpgrade::queue_messages`]): a handler that stops reading eventually stops the
+/// pump from reading data (pings are still sent and the idle and pong timers are paused
+/// meanwhile), and `send` waits while the outbound queue is full or its byte budget
+/// ([`ManagedUpgrade::max_queued_bytes`]) is exhausted.
 /// Use [`WebSocketUpgrade::on_upgrade`] for full control of the raw socket instead; none of
 /// these guarantees apply there.
 #[derive(Debug)]
 pub struct ManagedSocket {
     rx: tokio::sync::mpsc::Receiver<Message>,
-    tx: tokio::sync::mpsc::Sender<Outbound>,
+    tx: OutboundTx,
     stop: WsShutdown,
 }
 
 #[derive(Debug)]
 enum Outbound {
-    Message(Message),
+    /// A message and its reservation in the byte budget (returned when dropped).
+    Message(Message, tokio::sync::OwnedSemaphorePermit),
     Close(Option<tungstenite::protocol::CloseFrame>),
 }
 
@@ -1198,25 +1368,19 @@ impl ManagedSocket {
         self.rx.recv().await
     }
 
-    /// Queues a message for sending. Waits while the outbound queue is full; fails once the
-    /// session is closed. Control frames are managed by Poring: `Ping`/`Pong` are sent as
-    /// given, `Close` closes the session.
+    /// Queues a message for sending. Waits while the outbound queue is full or its byte
+    /// budget is exhausted; fails once the session is closed, and fails immediately for a
+    /// message above [`ManagedUpgrade::max_outbound_message`]. Control frames are managed
+    /// by Poring: `Ping`/`Pong` are sent as given, `Close` closes the session.
     pub async fn send(&mut self, msg: Message) -> Result<(), WsError> {
-        let out = match msg {
-            Message::Close(frame) => Outbound::Close(frame),
-            m => Outbound::Message(m),
-        };
-        self.tx
-            .send(out)
-            .await
-            .map_err(|_| WsError::Socket(tungstenite::Error::AlreadyClosed))
+        self.tx.send(msg).await
     }
 
     /// Closes the session with `frame` (or `1000` when `None`). Codes that must not be sent
     /// (1004–1006, 1015, unassigned 1014–2999, below 1000, 5000 and above) are replaced by
     /// `1011`; reasons longer than 123 bytes are truncated at a character boundary.
     pub async fn close(self, frame: Option<tungstenite::protocol::CloseFrame>) {
-        let _ = self.tx.send(Outbound::Close(frame)).await;
+        self.tx.close(frame).await;
     }
 
     /// A handle that fires when the server begins shutting down.
@@ -1226,7 +1390,7 @@ impl ManagedSocket {
 
     /// Splits the socket into a receiver and a cloneable sender, so several tasks can send
     /// concurrently while one task receives. Messages from all senders go through the same
-    /// bounded queue (16 messages) in the order the queue accepts them. The session closes
+    /// bounded queue and byte budget, in the order the queue accepts them. The session closes
     /// with `1000` once the receiver's owner and every sender are gone (or on `close`).
     pub fn split(self) -> (ManagedReceiver, ManagedSender) {
         (
@@ -1255,26 +1419,19 @@ impl ManagedReceiver {
 /// Cloneable sending half of a [`ManagedSocket`] (see [`ManagedSocket::split`]).
 #[derive(Clone, Debug)]
 pub struct ManagedSender {
-    tx: tokio::sync::mpsc::Sender<Outbound>,
+    tx: OutboundTx,
     stop: WsShutdown,
 }
 
 impl ManagedSender {
     /// Queues a message (same semantics as [`ManagedSocket::send`]).
     pub async fn send(&self, msg: Message) -> Result<(), WsError> {
-        let out = match msg {
-            Message::Close(frame) => Outbound::Close(frame),
-            m => Outbound::Message(m),
-        };
-        self.tx
-            .send(out)
-            .await
-            .map_err(|_| WsError::Socket(tungstenite::Error::AlreadyClosed))
+        self.tx.send(msg).await
     }
 
     /// Closes the session (same semantics as [`ManagedSocket::close`]).
     pub async fn close(&self, frame: Option<tungstenite::protocol::CloseFrame>) {
-        let _ = self.tx.send(Outbound::Close(frame)).await;
+        self.tx.close(frame).await;
     }
 
     /// A handle that fires when the server begins shutting down.
@@ -1358,7 +1515,7 @@ where
         })
     }
 
-    /// Serializes and queues a message (waits while 16 messages are queued).
+    /// Serializes and queues a message (same waiting and limits as [`ManagedSocket::send`]).
     pub async fn send(&mut self, msg: &Out) -> Result<(), WsError> {
         let s = serde_json::to_string(msg)?;
         self.inner.send(Message::text(s)).await
@@ -1383,6 +1540,7 @@ where
 #[derive(Clone, Copy)]
 struct PumpConfig {
     ping: Option<std::time::Duration>,
+    pong: Option<std::time::Duration>,
     idle: Option<std::time::Duration>,
     close: std::time::Duration,
     lifetime: Option<std::time::Duration>,
@@ -1480,20 +1638,51 @@ async fn close_session(
     .await;
 }
 
-/// Drives a managed session's socket until it closes. Owns the socket; talks to the
-/// handler through two bounded queues. Wakes only on I/O, queue activity or its timers.
-async fn pump(
-    mut ws: RawSocket,
-    mut out_rx: tokio::sync::mpsc::Receiver<Outbound>,
+/// The pump's side of a managed session: queues, configuration and accounting.
+struct Pump {
+    out_rx: tokio::sync::mpsc::Receiver<Outbound>,
     in_tx: tokio::sync::mpsc::Sender<Message>,
     cfg: PumpConfig,
-    mut stop: WsShutdown,
-    mut gate: MessageGate,
-    mut meter: SessionMeter,
-) {
+    stop: WsShutdown,
+    gate: MessageGate,
+    meter: SessionMeter,
+    /// Closed when the pump ends, so senders waiting for budget fail instead of hanging.
+    budget: std::sync::Arc<tokio::sync::Semaphore>,
+    /// Fires when the handler panicked (dropped unfired when it returned normally).
+    panicked: tokio::sync::oneshot::Receiver<()>,
+}
+
+/// An outstanding heartbeat challenge.
+struct Challenge {
+    payload: [u8; 8],
+    deadline: tokio::time::Instant,
+}
+
+/// Drives a managed session's socket until it closes. Owns the socket; talks to the
+/// handler through two bounded queues. Wakes only on I/O, queue activity or its timers.
+async fn pump(mut ws: RawSocket, io: Pump) {
+    let budget = io.budget.clone();
+    run_pump(&mut ws, io).await;
+    // Wake senders waiting for budget: the session is over. Queued messages (and their
+    // reservations) were dropped with the receiver.
+    budget.close();
+    // Dropping `in_tx` (in `io`) made `ManagedSocket::recv` return `None`.
+}
+
+async fn run_pump(ws: &mut RawSocket, io: Pump) {
     use tokio::time::{Instant, sleep_until};
     use tungstenite::protocol::frame::coding::CloseCode;
 
+    let Pump {
+        mut out_rx,
+        in_tx,
+        cfg,
+        mut stop,
+        mut gate,
+        mut meter,
+        budget: _,
+        mut panicked,
+    } = io;
     let start = Instant::now();
     let far = start + std::time::Duration::from_secs(60 * 60 * 24 * 365);
     let lifetime_at = cfg.lifetime.map_or(far, |d| start + d);
@@ -1503,40 +1692,64 @@ async fn pump(
         i.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         i
     });
+    let mut challenge: Option<Challenge> = None;
+    let mut ping_seq: u64 = 0;
     // An inbound message waiting for room in the handler's queue; the socket is not read
-    // (and the idle timer is paused) meanwhile.
+    // (and the idle and pong timers are paused) meanwhile.
     let mut pending: Option<Message> = None;
+    let mut paused_at = start;
     let mut deliver = true;
+    let mut handler_watch = true;
     let write_bound = cfg.idle;
 
     loop {
         let idle_at = cfg.idle.map_or(far, |d| last_seen + d);
+        let pong_at = challenge.as_ref().map_or(far, |c| c.deadline);
         tokio::select! {
             biased;
             _ = stop.wait() => {
                 meter.note(WsEvent::ShutdownClose);
-                close_session(&mut ws, close_frame(CloseCode::Away, "server shutting down"), cfg.close).await;
+                close_session(ws, close_frame(CloseCode::Away, "server shutting down"), cfg.close).await;
                 break;
+            }
+            r = &mut panicked, if handler_watch => {
+                if r.is_ok() {
+                    close_session(ws, close_frame(CloseCode::Error, "internal error"), cfg.close).await;
+                    break;
+                }
+                handler_watch = false;
             }
             _ = sleep_until(lifetime_at), if cfg.lifetime.is_some() => {
                 meter.note(WsEvent::LifetimeExpired);
-                close_session(&mut ws, close_frame(CloseCode::Away, "session lifetime exceeded"), cfg.close).await;
+                close_session(ws, close_frame(CloseCode::Away, "session lifetime exceeded"), cfg.close).await;
                 break;
             }
             _ = sleep_until(idle_at), if cfg.idle.is_some() && pending.is_none() => {
                 tracing::debug!("websocket session idle timeout");
                 meter.note(WsEvent::IdleTimeout);
-                close_session(&mut ws, close_frame(CloseCode::Away, "idle timeout"), cfg.close).await;
+                close_session(ws, close_frame(CloseCode::Away, "idle timeout"), cfg.close).await;
                 break;
             }
             _ = async { ping.as_mut().expect("guarded").tick().await }, if ping.is_some() => {
-                let sent = ws.send(Message::Ping(Default::default()));
+                // One challenge at a time: an unanswered one keeps its own deadline.
+                if challenge.is_some() {
+                    continue;
+                }
+                ping_seq = ping_seq.wrapping_add(1);
+                let payload = ping_seq.to_be_bytes();
+                let sent = ws.send(Message::Ping(bytes::Bytes::copy_from_slice(&payload)));
                 let ok = match write_bound {
                     Some(b) => matches!(tokio::time::timeout(b, sent).await, Ok(Ok(()))),
                     None => sent.await.is_ok(),
                 };
                 if !ok {
                     break;
+                }
+                if let Some(t) = cfg.pong {
+                    challenge = Some(Challenge {
+                        payload,
+                        deadline: Instant::now() + t,
+                    });
                 }
             }
             permit = in_tx.reserve(), if pending.is_some() => {
@@ -1548,7 +1761,13 @@ async fn pump(
                         deliver = false;
                     }
                 }
-                last_seen = Instant::now();
+                let now = Instant::now();
+                // The socket was not read while the handler was busy: the pong deadline
+                // does not run meanwhile.
+                if let Some(c) = challenge.as_mut() {
+                    c.deadline += now - paused_at;
+                }
+                last_seen = now;
             }
             msg = ws.next(), if pending.is_none() => {
                 match msg {
@@ -1568,7 +1787,17 @@ async fn pump(
                                 .await;
                                 break;
                             }
-                            Message::Text(_) | Message::Binary(_) if deliver => pending = Some(m),
+                            Message::Text(_) | Message::Binary(_) if deliver => {
+                                pending = Some(m);
+                                paused_at = last_seen;
+                            }
+                            // Only the pong echoing the outstanding challenge answers it;
+                            // unsolicited and stale pongs are ignored (RFC 6455 §5.5.3).
+                            Message::Pong(p)
+                                if challenge.as_ref().is_some_and(|c| p.as_ref() == c.payload) =>
+                            {
+                                challenge = None;
+                            }
                             // Pings are answered by tungstenite on the next read/write; a
                             // peer close is answered likewise and ends the stream next.
                             _ => {}
@@ -1580,15 +1809,26 @@ async fn pump(
                         } else {
                             WsEvent::AbnormalDisconnect
                         });
-                        fail_session(&mut ws, &e, cfg.close).await;
+                        fail_session(ws, &e, cfg.close).await;
                         break;
                     }
                     None => break,
                 }
             }
+            // After the socket branch, so a pong that is already readable wins the race.
+            _ = sleep_until(pong_at), if challenge.is_some() && pending.is_none() => {
+                tracing::debug!("websocket heartbeat not answered in time");
+                meter.note(WsEvent::HeartbeatTimeout);
+                // The peer stopped answering: its close reply is waited for (while its
+                // input is drained, so the close frame is not lost to a TCP reset) no
+                // longer than it was given for the pong.
+                let bound = cfg.pong.map_or(cfg.close, |p| p.min(cfg.close));
+                close_session(ws, close_frame(CloseCode::Away, "heartbeat timeout"), bound).await;
+                break;
+            }
             out = out_rx.recv() => {
                 match out {
-                    Some(Outbound::Message(m)) => {
+                    Some(Outbound::Message(m, reserved)) => {
                         if matches!(m, Message::Text(_) | Message::Binary(_)) {
                             meter.sent(&m);
                         }
@@ -1597,25 +1837,26 @@ async fn pump(
                             Some(b) => matches!(tokio::time::timeout(b, sent).await, Ok(Ok(()))),
                             None => sent.await.is_ok(),
                         };
+                        // Written (or failed): the bytes are no longer queued.
+                        drop(reserved);
                         if !ok {
                             break;
                         }
                     }
                     Some(Outbound::Close(frame)) => {
                         let frame = sanitize_close(frame).or_else(|| close_frame(CloseCode::Normal, ""));
-                        close_session(&mut ws, frame, cfg.close).await;
+                        close_session(ws, frame, cfg.close).await;
                         break;
                     }
                     // The handler finished (or dropped the socket).
                     None => {
-                        close_session(&mut ws, close_frame(CloseCode::Normal, ""), cfg.close).await;
+                        close_session(ws, close_frame(CloseCode::Normal, ""), cfg.close).await;
                         break;
                     }
                 }
             }
         }
     }
-    // Dropping `in_tx` makes `ManagedSocket::recv` return `None`.
 }
 
 /// A typed upgrade in progress.
@@ -1879,5 +2120,180 @@ mod gate_tests {
         assert!(g.admit(t));
         let mut g = Gcra::new(u32::MAX, Duration::from_nanos(1));
         assert!(g.admit(g.start));
+    }
+}
+
+#[cfg(test)]
+mod outbound_tests {
+    use super::*;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    const SHORT: Duration = Duration::from_millis(50);
+
+    fn queue(
+        messages: usize,
+        budget: usize,
+        max_message: usize,
+    ) -> (
+        OutboundTx,
+        tokio::sync::mpsc::Receiver<Outbound>,
+        Arc<tokio::sync::Semaphore>,
+    ) {
+        let (tx, rx) = tokio::sync::mpsc::channel(messages);
+        let bytes = Arc::new(tokio::sync::Semaphore::new(budget));
+        let out = OutboundTx {
+            tx,
+            budget: OutBudget {
+                bytes: bytes.clone(),
+                max_message: max_message.min(budget),
+            },
+        };
+        (out, rx, bytes)
+    }
+
+    fn bin(n: usize) -> Message {
+        Message::binary(vec![0u8; n])
+    }
+
+    #[tokio::test]
+    async fn small_messages_within_limits() {
+        let (tx, mut rx, bytes) = queue(16, 100, 100);
+        for _ in 0..3 {
+            tx.send(bin(10)).await.unwrap();
+        }
+        assert_eq!(bytes.available_permits(), 70);
+        for _ in 0..3 {
+            drop(rx.recv().await.unwrap());
+        }
+        assert_eq!(
+            bytes.available_permits(),
+            100,
+            "written messages return their bytes"
+        );
+    }
+
+    #[tokio::test]
+    async fn oversized_messages_fail_immediately_and_reserve_nothing() {
+        let (tx, _rx, bytes) = queue(16, 1000, 100);
+        let e = tx.send(bin(101)).await.unwrap_err();
+        assert!(
+            matches!(
+                e,
+                WsError::Socket(tungstenite::Error::Capacity(
+                    tungstenite::error::CapacityError::MessageTooLong {
+                        size: 101,
+                        max_size: 100
+                    }
+                ))
+            ),
+            "{e:?}"
+        );
+        assert_eq!(bytes.available_permits(), 1000);
+        // The per-message limit never exceeds the byte budget (it could never be queued).
+        let (tx, _rx, _) = queue(16, 64, 1 << 20);
+        assert!(tx.send(bin(65)).await.is_err());
+        tx.send(bin(64)).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn message_count_exhaustion_applies_backpressure() {
+        let (tx, mut rx, _) = queue(2, 1 << 20, 1 << 20);
+        tx.send(bin(1)).await.unwrap();
+        tx.send(bin(1)).await.unwrap();
+        assert!(
+            tokio::time::timeout(SHORT, tx.send(bin(1))).await.is_err(),
+            "a third message waits for room"
+        );
+        drop(rx.recv().await.unwrap());
+        tokio::time::timeout(SHORT, tx.send(bin(1)))
+            .await
+            .expect("room again")
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn queued_byte_exhaustion_applies_backpressure() {
+        let (tx, mut rx, bytes) = queue(100, 100, 100);
+        tx.send(bin(60)).await.unwrap();
+        assert!(
+            tokio::time::timeout(SHORT, tx.send(bin(60))).await.is_err(),
+            "120 bytes do not fit a 100-byte budget"
+        );
+        // The cancelled wait reserved nothing.
+        assert_eq!(bytes.available_permits(), 40);
+        drop(rx.recv().await.unwrap());
+        tokio::time::timeout(SHORT, tx.send(bin(60)))
+            .await
+            .expect("budget returned")
+            .unwrap();
+        assert_eq!(bytes.available_permits(), 40);
+    }
+
+    #[tokio::test]
+    async fn waiting_senders_fail_once_the_session_ends() {
+        let (tx, rx, bytes) = queue(16, 10, 10);
+        tx.send(bin(10)).await.unwrap();
+        let waiting = tokio::spawn({
+            let tx = tx.clone();
+            async move { tx.send(bin(5)).await }
+        });
+        tokio::task::yield_now().await;
+        // What the pump does when it ends: drop the queue and close the budget.
+        drop(rx);
+        bytes.close();
+        let r = tokio::time::timeout(Duration::from_secs(5), waiting)
+            .await
+            .expect("does not hang")
+            .unwrap();
+        assert!(matches!(
+            r,
+            Err(WsError::Socket(tungstenite::Error::AlreadyClosed))
+        ));
+        assert!(tx.send(bin(1)).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn dropping_a_full_queue_returns_every_byte() {
+        let (tx, rx, bytes) = queue(4, 1000, 1000);
+        for _ in 0..4 {
+            tx.send(bin(100)).await.unwrap();
+        }
+        assert_eq!(bytes.available_permits(), 600);
+        drop(rx);
+        assert_eq!(bytes.available_permits(), 1000, "no accounting leak");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_senders_share_the_budget_without_leaks() {
+        let (tx, mut rx, bytes) = queue(8, 30, 30);
+        let consumer = tokio::spawn(async move {
+            let mut n = 0usize;
+            while let Some(m) = rx.recv().await {
+                if let Outbound::Message(m, reserved) = m {
+                    n += m.len();
+                    drop(reserved);
+                }
+            }
+            n
+        });
+        let mut senders = Vec::new();
+        for _ in 0..8 {
+            let tx = tx.clone();
+            senders.push(tokio::spawn(async move {
+                for _ in 0..50 {
+                    tx.send(bin(10)).await.unwrap();
+                }
+            }));
+        }
+        for s in senders {
+            tokio::time::timeout(Duration::from_secs(10), s)
+                .await
+                .expect("no deadlock")
+                .unwrap();
+        }
+        drop(tx);
+        assert_eq!(consumer.await.unwrap(), 8 * 50 * 10);
+        assert_eq!(bytes.available_permits(), 30);
     }
 }

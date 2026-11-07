@@ -1391,3 +1391,98 @@ mod contract {
         );
     }
 }
+
+/// Opaque origins: a sandboxed iframe or `data:` page sends `Origin: null` with the user's
+/// cookies. Listing `"null"` in the *HTTP* CORS configuration must not admit a WebSocket
+/// handshake (the Origin is validated before any allowlist), while ordinary HTTP CORS for
+/// that origin keeps working as configured.
+#[tokio::test]
+async fn cors_listing_null_does_not_admit_opaque_websocket_origins() {
+    let started = Started::default();
+    let server = Poring::new()
+        .authenticator(TableAuth::fixture())
+        .cors(
+            Cors::new()
+                .origins(["null", "https://app.example"])
+                .credentials(true),
+        )
+        .route_with(
+            RouteMethod::Get,
+            "/ws",
+            Policy::new().authenticated(),
+            ws_handler(started.clone()),
+        )
+        .route_with(
+            RouteMethod::Get,
+            "/data",
+            Policy::new().public(),
+            || async { "data" },
+        )
+        .build()
+        .unwrap()
+        .bind("127.0.0.1:0")
+        .await
+        .unwrap();
+    let addr = server.local_addr();
+    let cookie = "Cookie: sid=session-bob\r\n";
+
+    for origin in [
+        "null",
+        "NULL",
+        "https://app.example.",
+        "https://app_example",
+        "https://%61pp.example",
+        "https://app..example",
+        "https://[not-v6]",
+    ] {
+        let head = handshake(
+            addr,
+            ws_request(addr, "/ws", &format!("Origin: {origin}\r\n{cookie}")),
+        )
+        .await;
+        assert_eq!(status_of(&head), 403, "{origin:?} must be denied: {head}");
+    }
+    // Non-ASCII (an unencoded IDN) is not a serialised origin.
+    let mut req = ws_request(addr, "/ws", cookie).into_bytes();
+    let at = req.len() - 2;
+    req.splice(at..at, "Origin: https://äpp.example\r\n".bytes());
+    let head = handshake(addr, String::from_utf8(req).unwrap()).await;
+    assert_eq!(status_of(&head), 403, "non-ASCII origin: {head}");
+
+    // The explicitly listed tuple origin still upgrades with credentials.
+    let head = handshake(
+        addr,
+        ws_request(
+            addr,
+            "/ws",
+            &format!("Origin: https://app.example\r\n{cookie}"),
+        ),
+    )
+    .await;
+    assert_eq!(status_of(&head), 101, "{head}");
+
+    // Ordinary HTTP CORS is unchanged: the configured `null` entry is honoured there.
+    let mut s = tokio::net::TcpStream::connect(addr).await.unwrap();
+    s.write_all(
+        format!("GET /data HTTP/1.1\r\nHost: {addr}\r\nOrigin: null\r\nConnection: close\r\n\r\n")
+            .as_bytes(),
+    )
+    .await
+    .unwrap();
+    let mut body = String::new();
+    let _ = tokio::time::timeout(Duration::from_secs(3), s.read_to_string(&mut body)).await;
+    assert_eq!(status_of(&body), 200, "{body}");
+    assert!(
+        body.to_ascii_lowercase()
+            .contains("access-control-allow-origin: null"),
+        "HTTP CORS must keep its configured behaviour: {body}"
+    );
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(
+        started.0.load(Ordering::SeqCst),
+        1,
+        "only the valid origin starts"
+    );
+    server.shutdown().await.unwrap();
+}

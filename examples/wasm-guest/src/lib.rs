@@ -12,7 +12,7 @@ use alloc::string::String;
 use alloc::vec;
 
 wit_bindgen::generate!({
-    path: "../../wit",
+    path: "../../crates/poring/wit",
     world: "guest",
 });
 

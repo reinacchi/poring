@@ -6,7 +6,7 @@
 //! that stream (tokio-tungstenite in client role over hyper's upgraded stream). No HTTP/1.1
 //! `Upgrade` and no `Sec-WebSocket-Key` are involved.
 //!
-//! Run with `cargo test -p poring-tests --no-default-features --features http2 --test ws_h2`.
+//! Run with `cargo test -p poring-tests --no-default-features --features websocket,http2 --test ws_h2`.
 
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -751,7 +751,7 @@ async fn shutdown_closes_open_http2_websockets_with_going_away() {
 
 /// Runs `tests/interop/h2_ws_client.mjs` against a Poring server. Requires Node.js >= 18
 /// on `PATH`; ignored by default so a missing Node never turns into a silent pass. Run with
-/// `cargo test -p poring-tests --no-default-features --features http2 --test ws_h2 -- --ignored`.
+/// `cargo test -p poring-tests --no-default-features --features websocket,http2 --test ws_h2 -- --ignored`.
 #[tokio::test]
 #[ignore = "requires Node.js on PATH; run with --ignored"]
 async fn independent_nodejs_http2_client_interoperates() {

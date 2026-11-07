@@ -10,6 +10,7 @@ use http::Request;
 
 use crate::body::ReqBody;
 
+use super::tasks::{TaskScope, TaskTracker};
 use super::{App, AppSpec};
 
 impl<A: AppSpec> App<A> {
@@ -91,8 +92,17 @@ impl<A: AppSpec> App<A> {
         shutdown: impl Future<Output = ()> + Send,
         transport: Transport,
     ) -> std::io::Result<()> {
-        let max = self.inner.limits.max_connections.max(1);
+        // At least one connection (zero would never accept anything), at most what a
+        // semaphore can count.
+        let max = self
+            .inner
+            .limits
+            .max_connections
+            .clamp(1, tokio::sync::Semaphore::MAX_PERMITS);
         let permits = Arc::new(tokio::sync::Semaphore::new(max));
+        // Every connection task is owned by this scope: dropping `serve` (or reaching the
+        // end of shutdown) aborts whatever is left, so no connection outlives it.
+        let connections = TaskScope(TaskTracker::new());
         #[cfg(feature = "websocket")]
         let sessions = Arc::new(crate::ws::Supervisor::new(
             self.inner.limits.max_ws_sessions,
@@ -132,7 +142,7 @@ impl<A: AppSpec> App<A> {
                 sessions: sessions.clone(),
             };
             let transport = transport.clone();
-            tokio::spawn(async move {
+            connections.0.spawn(async move {
                 let _permit = permit;
                 match transport {
                     Transport::Plain => serve_conn(app, stream, peer, conn, &mut stop).await,
@@ -159,18 +169,36 @@ impl<A: AppSpec> App<A> {
         #[cfg(feature = "websocket")]
         sessions.close();
         let _ = stop_tx.send(true);
+        connections.0.close();
         let grace = self.inner.limits.shutdown_grace;
-        // Connections, including those carrying WebSocket sessions, drain until `grace`.
-        let drained = tokio::time::timeout(grace, permits.acquire_many(max as u32)).await;
+        // Connections (and their HTTP/2 streams), including those carrying WebSocket
+        // sessions, drain until `grace`. A WebSocket session holds its connection's permit,
+        // so all permits back means every connection task *and* every session has ended.
+        let all = u32::try_from(max).unwrap_or(u32::MAX);
+        let drained = tokio::time::timeout(grace, async {
+            connections.0.wait_idle().await;
+            let _ = permits.acquire_many(all).await;
+        })
+        .await;
         if drained.is_err() {
             tracing::warn!("graceful shutdown grace period elapsed with connections still open");
         }
-        // Sessions still running after the grace period are cancelled, so none outlives
-        // `serve`.
+        // Whatever is still running after the grace period is cancelled — connection tasks
+        // (which aborts their HTTP/2 stream tasks too) and WebSocket sessions — so nothing
+        // outlives `serve`.
+        let bound = grace.max(Duration::from_millis(100));
+        let aborted = connections.0.abort_all();
+        if aborted > 0 {
+            tracing::debug!(connections = aborted, "connections cancelled at shutdown");
+        }
         #[cfg(feature = "websocket")]
-        sessions
-            .abort_all(grace.max(Duration::from_millis(100)))
-            .await;
+        sessions.abort_all(bound).await;
+        if tokio::time::timeout(bound, connections.0.wait_idle())
+            .await
+            .is_err()
+        {
+            tracing::warn!("connection tasks did not stop after cancellation");
+        }
         Ok(())
     }
 }
@@ -254,10 +282,13 @@ async fn serve_conn<A: AppSpec, S>(
             .header_read_timeout(header_timeout);
         b.serve_connection(io, svc).with_upgrades()
     };
+    // HTTP/2 stream tasks are owned by this connection: they are aborted when the
+    // connection task ends or is cancelled, instead of running on detached.
+    #[cfg(feature = "http2")]
+    let streams = TaskScope(TaskTracker::new());
     #[cfg(feature = "http2")]
     let builder = {
-        let mut b =
-            hyper_util::server::conn::auto::Builder::new(hyper_util::rt::TokioExecutor::new());
+        let mut b = hyper_util::server::conn::auto::Builder::new(StreamExecutor(streams.0.clone()));
         b.http1()
             .timer(hyper_util::rt::TokioTimer::new())
             .header_read_timeout(header_timeout);
@@ -282,6 +313,25 @@ async fn serve_conn<A: AppSpec, S>(
     }
     if let Err(e) = conn.await {
         tracing::debug!(error = %e, "connection ended with error during shutdown");
+    }
+}
+
+/// Spawns a connection's HTTP/2 stream tasks into that connection's [`TaskTracker`].
+#[cfg(feature = "http2")]
+#[derive(Clone)]
+struct StreamExecutor(TaskTracker);
+
+#[cfg(feature = "http2")]
+impl<F> hyper::rt::Executor<F> for StreamExecutor
+where
+    F: Future + Send + 'static,
+    F::Output: Send + 'static,
+{
+    fn execute(&self, fut: F) {
+        // Refused only once the connection was cancelled: the stream is dropped with it.
+        self.0.spawn_draining(async move {
+            fut.await;
+        });
     }
 }
 

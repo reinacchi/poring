@@ -25,6 +25,7 @@ use crate::router::{Router, RouterError, Target};
 mod pipeline;
 mod plan;
 mod server;
+pub(crate) mod tasks;
 
 use pipeline::AppInner;
 pub(crate) use plan::AppLevel;
