@@ -1,10 +1,10 @@
 //! `Path<T>`: typed, percent-decoded path parameters.
 //!
 //! Decoding rules:
-//! * routing matches the raw, still-encoded path; static segments never match encoded
-//!   spellings (`/us%65rs` does not match `/users`);
-//! * parameter values are percent-decoded after matching; `%2F` decodes to `/` inside a
-//!   value (it is data, not a separator);
+//! * routing matches the raw, still-encoded path. Static segments never match encoded
+//!   spellings (`/us%65rs` does not match `/users`).
+//! * parameter values are percent-decoded after matching. `%2F` decodes to `/` inside a
+//!   value (it is data, not a separator).
 //! * a `%` not followed by two hex digits, or a decoded value that is not UTF-8, is
 //!   rejected with `400 invalid_path_param`.
 

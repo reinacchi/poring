@@ -18,6 +18,8 @@ use crate::policy::EffectivePolicy;
 /// Ordered runtime checks (shared vocabulary with the static graph).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Check {
+    /// WebSocket handshake origin check (WebSocket routes).
+    WsOrigin,
     /// CORS origin check for unsafe methods.
     Cors,
     /// Rate limit.
@@ -35,6 +37,7 @@ pub enum Check {
 impl Check {
     pub(crate) fn parse(s: &str) -> Option<Check> {
         Some(match s {
+            "ws_origin" => Check::WsOrigin,
             "cors" => Check::Cors,
             "rate_limit" => Check::RateLimit,
             "auth" => Check::Auth,
@@ -191,21 +194,41 @@ impl Router {
             None => None,
         };
         match idx {
-            Some(i) => {
-                let mut params = Params::new();
-                let base = path.as_ptr() as usize;
-                for (k, v) in m.params.iter() {
-                    let start = (v.as_ptr() as usize).saturating_sub(base);
-                    // Route keys live as long as the router (`'r`).
-                    if !params.push(k, start, start + v.len()) {
-                        break;
-                    }
-                }
-                Lookup::Found(i, params)
-            }
+            Some(i) => Lookup::Found(i, Self::params(path, &m.params)),
             None if wanted == Some(Method::Options) => Lookup::AutoOptions(entry),
             None => Lookup::MethodNotAllowed(entry),
         }
+    }
+
+    /// Lookup for an HTTP/2 Extended CONNECT WebSocket handshake (RFC 8441). Only the
+    /// path's `GET` route can match, and only when `is_websocket` says it is a WebSocket
+    /// route. Anything else is `405` with the path's `Allow`. No other method's route is
+    /// ever selected, so CONNECT can never reach a non-WebSocket handler (no tunnels).
+    pub(crate) fn lookup_websocket<'r>(
+        &'r self,
+        path: &str,
+        is_websocket: impl Fn(u32) -> bool,
+    ) -> Lookup<'r> {
+        let Ok(m) = self.inner.at(path) else {
+            return Lookup::NotFound;
+        };
+        match m.value.methods[Method::Get.index()] {
+            Some(i) if is_websocket(i) => Lookup::Found(i, Self::params(path, &m.params)),
+            _ => Lookup::MethodNotAllowed(m.value),
+        }
+    }
+
+    fn params<'r>(path: &str, matched: &matchit::Params<'r, '_>) -> Params<'r> {
+        let mut params = Params::new();
+        let base = path.as_ptr() as usize;
+        for (k, v) in matched.iter() {
+            let start = (v.as_ptr() as usize).saturating_sub(base);
+            // Route keys live as long as the router (`'r`).
+            if !params.push(k, start, start + v.len()) {
+                break;
+            }
+        }
+        params
     }
 }
 

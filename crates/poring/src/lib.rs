@@ -69,6 +69,8 @@ pub mod response;
 pub mod router;
 pub mod schema;
 pub mod testing;
+#[cfg(feature = "tls-rustls")]
+pub mod tls;
 #[cfg(feature = "wasm")]
 pub mod wasm;
 #[cfg(feature = "websocket")]
@@ -106,13 +108,14 @@ pub mod prelude {
     pub use crate::fluent::Poring;
     pub use crate::policy::{
         AuthError, AuthRequest, Authenticator, Cors, Credential, Identity, Policy, RateKey,
-        RateLimit, RateLimitStatus, RateScope,
+        RateLimit, RateLimitStatus, RateScope, WsOrigins,
     };
     #[cfg(feature = "json")]
     pub use crate::response::Json;
     pub use crate::response::{Html, IntoResponse, Redirect, Response};
     pub use crate::{
-        ApiError, Body, Bytes, Ctx, HeaderMap, HeaderValue, PoringSchema, RequestId, StatusCode,
+        ApiError, Body, Bytes, Ctx, HeaderMap, HeaderValue, Limits, PoringSchema, RequestId,
+        StatusCode,
     };
     pub use poring_macros::{PoringState, poring_app, poring_plugin};
 }
@@ -131,7 +134,7 @@ pub mod __private {
     pub use crate::policy::check::check_app;
     pub use crate::policy::{
         AuthSpec, Authenticator, CsrfSpec, NoAuth, PolicySpec, RateKey, RateLimitSpec, RateScope,
-        TimeoutSpec,
+        TimeoutSpec, WsOriginsSpec,
     };
     pub use crate::response::describe::{
         DescribeFallback, DescribeResponse, DescribeViaTrait, Probe,
@@ -249,7 +252,7 @@ pub mod __private {
     pub trait BeforeHook<S> {
         /// Hook name.
         const NAME: &'static str;
-        /// Runs the hook; `Err(response)` short-circuits.
+        /// Runs the hook. `Err(response)` short-circuits.
         fn before<'a, 'c>(
             cx: &'c mut Ctx<'a, S>,
         ) -> impl Future<Output = Result<(), Response>> + Send + 'c;

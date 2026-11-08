@@ -14,7 +14,7 @@ pub trait Named {
 }
 
 /// A typed header value (`T: Named + FromStr`). Missing or invalid headers are
-/// rejected with 400; use `Option<Header<T>>` for optional headers.
+/// rejected with 400. Use `Option<Header<T>>` for optional headers.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Header<T>(pub T);
 

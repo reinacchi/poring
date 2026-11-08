@@ -6,7 +6,7 @@
 //! interval) → read → (`.wat` files are componentised with the guest kit) →
 //! [`GuestSlot::try_reload`] (compile, link, validate, probe, atomic swap) on the watcher
 //! thread, never on a request thread. A partially written artefact either fails the
-//! stability check or fails preflight; in both cases the last known-good version keeps
+//! stability check or fails preflight. In both cases the last known-good version keeps
 //! serving.
 
 use std::path::{Path, PathBuf};
@@ -71,7 +71,7 @@ fn stat(p: &Path) -> Option<(u64, SystemTime)> {
     Some((m.len(), m.modified().ok()?))
 }
 
-/// Reads an artefact; `.wat` core modules are componentised (guest-kit).
+/// Reads an artefact. `.wat` core modules are componentised (guest-kit).
 pub fn read_artefact(p: &Path) -> Result<Vec<u8>, LoadError> {
     let bytes = std::fs::read(p).map_err(|e| LoadError::Io(e.to_string()))?;
     #[cfg(feature = "guest-kit")]

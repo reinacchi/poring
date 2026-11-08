@@ -52,10 +52,25 @@ impl<S: Sync> FromRequest<S> for Multipart {
     type Rejection = ApiError;
 
     async fn from_request(cx: &mut Ctx<'_, S>) -> Result<Self, ApiError> {
-        let boundary = cx
-            .content_type()
+        let ct = cx.content_type();
+        let is_form_data = ct.is_some_and(|ct| {
+            ct.split(';')
+                .next()
+                .is_some_and(|m| m.trim().eq_ignore_ascii_case("multipart/form-data"))
+        });
+        if !is_form_data {
+            return Err(rejection::unsupported_media_type("multipart/form-data"));
+        }
+        // The right media type with a missing or malformed `boundary` is a bad request,
+        // not an unsupported media type.
+        let boundary = ct
             .and_then(|ct| multer::parse_boundary(ct).ok())
-            .ok_or_else(|| rejection::unsupported_media_type("multipart/form-data"))?;
+            .ok_or_else(|| {
+                rejection::bad_request(
+                    "multipart_boundary",
+                    "multipart/form-data requires a valid boundary parameter",
+                )
+            })?;
         let limit = cx.body_limit();
         let body = cx
             .take_body()

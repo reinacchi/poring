@@ -97,6 +97,12 @@ impl CorsRuntime {
         (self.wildcard && !self.credentials) || self.origins.iter().any(|o| o == origin)
     }
 
+    /// Whether `origin` is listed explicitly (the wildcard `*` does not count). Used for
+    /// WebSocket handshakes, where a wildcard would re-open cross-site hijacking.
+    pub(crate) fn allows_explicit(&self, origin: &str) -> bool {
+        self.origins.iter().any(|o| o != "*" && o == origin)
+    }
+
     /// Adds CORS response headers for an allowed `origin`.
     pub fn apply(&self, origin: &HeaderValue, headers: &mut HeaderMap) {
         use http::header::*;

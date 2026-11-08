@@ -102,7 +102,7 @@ void main;
 "#,
     )
     .unwrap();
-    // npm installs `tsc.cmd` on Windows; `Command` does not resolve `.cmd` through PATHEXT.
+    // npm installs `tsc.cmd` on Windows. `Command` does not resolve `.cmd` through PATHEXT.
     let program = if cfg!(windows) { "tsc.cmd" } else { "tsc" };
     let tsc = std::process::Command::new(program)
         .args([

@@ -7,7 +7,8 @@ members = [
     "tests",
 ]
 # The example Wasm guest targets wasm32 and is built on its own.
-exclude = ["examples/wasm-guest"]
+# The WebSocket benchmark pulls in Axum and keeps its own lockfile.
+exclude = ["examples/wasm-guest", "benches/ws-bench"]
 
 [workspace.package]
 edition = "2024"
@@ -18,8 +19,10 @@ repository = "https://github.com/reinacchi/poring"
 homepage = "https://github.com/reinacchi/poring"
 
 [workspace.dependencies]
-poring = { path = "crates/poring", version = "0.1.2" }
-poring-macros = { path = "crates/poring-macros", version = "=0.1.1" }
+# Members opt into Poring features explicitly (Cargo 1.97 rejects a member-level
+# `default-features = false` unless the workspace entry disables defaults too).
+poring = { path = "crates/poring", version = "0.1.3", default-features = false }
+poring-macros = { path = "crates/poring-macros", version = "=0.1.2" }
 
 tokio = { version = "1.54", default-features = false }
 hyper = { version = "1.12", default-features = false }

@@ -3,7 +3,7 @@
 //! * [`componentise`] wraps a **core** Wasm module (binary or WAT text) that follows the
 //!   canonical ABI for the Poring WIT world into a Component Model component. If the core
 //!   module already embeds component-type metadata (as produced by `wit-bindgen`), that
-//!   metadata is used; otherwise the bundled `wit/poring-plugin.wit` is embedded.
+//!   metadata is used. Otherwise the bundled `wit/poring-plugin.wit` is embedded.
 //! * [`GuestSpec`] generates small, readable core-WAT guests with configurable behaviour.
 //!   The test suite and the hot-reload demo use them.
 
@@ -127,7 +127,7 @@ impl GuestSpec {
         self
     }
 
-    /// Only real requests see the behaviour; the preflight probe gets an echo.
+    /// Only real requests see the behaviour. The preflight probe gets an echo.
     pub fn probe_safe(mut self) -> Self {
         self.probe_safe = true;
         self

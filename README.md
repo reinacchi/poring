@@ -67,6 +67,4 @@ async fn main() -> Result<(), poring::StartupError> {
 }
 ```
 
-## Examples
-
 See more examples [here](/examples/).

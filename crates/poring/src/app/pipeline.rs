@@ -50,6 +50,12 @@ pub(super) struct AppInner<A: AppSpec> {
     pub(super) error_mapper: Option<ErrorMapper>,
     pub(super) request_ids: bool,
     pub(super) proxies: TrustedProxies,
+    pub(super) ws_origins: crate::policy::ws_origin::WsOriginPolicy,
+    /// Route-level overrides of `ws_origins`, indexed by `RouteRuntime::index`.
+    pub(super) route_ws_origins: Box<[Option<crate::policy::ws_origin::WsOriginPolicy>]>,
+    /// App-wide WebSocket counters (shared by every listener serving this app).
+    #[cfg(feature = "websocket")]
+    pub(crate) ws_counters: std::sync::Arc<crate::ws::WsCounters>,
     pub(super) manifest_base: Manifest,
 }
 
@@ -99,7 +105,13 @@ impl<A: AppSpec> AppInner<A> {
         if let Some(f) = flow.as_deref_mut() {
             f.mark(Stage::Match);
         }
-        let lookup = self.router.lookup(parts.uri.path(), &parts.method);
+        let lookup = if crate::policy::ws_origin::is_h2_websocket_handshake(&parts) {
+            self.router.lookup_websocket(parts.uri.path(), |i| {
+                self.routes[i as usize].policy.websocket
+            })
+        } else {
+            self.router.lookup(parts.uri.path(), &parts.method)
+        };
         match lookup {
             Lookup::NotFound => {
                 if let Some(f) = flow.as_deref_mut() {
@@ -166,7 +178,7 @@ impl<A: AppSpec> AppInner<A> {
                         r
                     }
                 };
-                // Preflight responses already carry CORS headers; don't re-apply.
+                // Preflight responses already carry CORS headers. Don't re-apply.
                 self.finish(
                     r,
                     Finish {
@@ -350,20 +362,74 @@ impl<A: AppSpec> AppInner<A> {
         }
     }
 
+    fn note_ws_origin_denied(&self) {
+        #[cfg(feature = "websocket")]
+        self.ws_counters.note(crate::ws::WsEvent::OriginDenied);
+        tracing::debug!("websocket handshake rejected by origin policy");
+    }
+
+    /// Whether a WebSocket handshake's `Origin` is acceptable for the route (`true` for
+    /// requests that are not WebSocket handshakes).
+    fn ws_origin_ok(&self, cx: &Ctx<'_, A::State>) -> bool {
+        crate::policy::ws_origin::websocket_handshake(
+            &cx.parts.method,
+            cx.parts.version,
+            &cx.parts.headers,
+            &cx.parts.extensions,
+        )
+        .is_none()
+            || crate::policy::ws_origin::origin_allowed(
+                &cx.parts.headers,
+                &cx.parts.uri,
+                self.cors.as_ref(),
+                self.route_ws_origins
+                    .get(cx.route.index as usize)
+                    .and_then(Option::as_ref)
+                    .unwrap_or(&self.ws_origins),
+                &self.proxies,
+                cx.peer.map(|p| p.ip()),
+                cx.parts
+                    .extensions
+                    .get::<crate::policy::ws_origin::SecureTransport>()
+                    .is_some(),
+            )
+    }
+
     /// Runs the route's precomputed security checks in order.
+    #[allow(clippy::result_large_err)] // Same shape as `rate_limit`; boxing would allocate per denial.
     async fn enforce(&self, cx: &mut Ctx<'_, A::State>) -> Result<(), Response> {
         let route = cx.route;
+        // WebSocket handshakes are GETs, so neither the CORS check (unsafe methods only)
+        // nor CSRF stops a cross-site handshake. WebSocket routes run `Check::WsOrigin`
+        // first (listed in their contract). Any other route that receives an upgrade
+        // request is checked here as a backstop (not a graph stage: only `deny.403`).
+        if !route.policy.websocket && !self.ws_origin_ok(cx) {
+            cx.mark(Stage::Deny(403));
+            self.note_ws_origin_denied();
+            return Err(ws_origin_denied());
+        }
         for check in &route.checks {
             match check {
+                Check::WsOrigin => {
+                    cx.mark(Stage::WsOrigin);
+                    if !self.ws_origin_ok(cx) {
+                        cx.mark(Stage::Deny(403));
+                        self.note_ws_origin_denied();
+                        return Err(ws_origin_denied());
+                    }
+                }
                 Check::Cors => {
                     cx.mark(Stage::Cors);
                     if let (Some(cors), Some(o)) =
                         (&self.cors, cx.parts.headers.get(http::header::ORIGIN))
                     {
                         let allowed = o.to_str().map(|s| cors.allows(s)).unwrap_or(false);
-                        let unsafe_method = Method::from_http(&cx.parts.method)
-                            .map(Method::is_unsafe)
-                            .unwrap_or(true);
+                        // An HTTP/2 WebSocket handshake is judged like the HTTP/1.1 GET.
+                        let unsafe_method =
+                            !crate::policy::ws_origin::is_h2_websocket_handshake(&cx.parts)
+                                && Method::from_http(&cx.parts.method)
+                                    .map(Method::is_unsafe)
+                                    .unwrap_or(true);
                         if !allowed && unsafe_method {
                             cx.mark(Stage::Deny(403));
                             return Err(rejection::forbidden(
@@ -390,6 +456,10 @@ impl<A: AppSpec> AppInner<A> {
                         Ok(Some(id)) => cx.identity = Some(id),
                         Ok(None) | Err(AuthError::Invalid) => {
                             cx.mark(Stage::Deny(401));
+                            #[cfg(feature = "websocket")]
+                            if route.policy.websocket {
+                                self.ws_counters.note(crate::ws::WsEvent::AuthDenied);
+                            }
                             return Err(rejection::unauthenticated().into_response());
                         }
                         Err(AuthError::Unavailable(msg)) => {
@@ -713,4 +783,9 @@ async fn call_dynamic<S>(ep: &dyn crate::dynamic::DynEndpoint, cx: &mut Ctx<'_, 
     };
     cx.mark(Stage::Wasm);
     ep.call(req).await
+}
+
+fn ws_origin_denied() -> Response {
+    rejection::forbidden("ws_origin_denied", "WebSocket handshake origin not allowed")
+        .into_response()
 }

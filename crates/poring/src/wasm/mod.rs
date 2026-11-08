@@ -9,7 +9,7 @@
 //! * **Reload**: [`GuestSlot::try_reload`] compiles, links against the *granted* imports,
 //!   validates the ABI version and declared capabilities, and runs a probe call, all off the
 //!   live path. Only then does it atomically swap the active version (`ArcSwap`). In-flight
-//!   requests keep their version until they finish; failures leave the last known-good
+//!   requests keep their version until they finish. Failures leave the last known-good
 //!   version active. History is bounded and [`GuestSlot::rollback`] restores the previous
 //!   version.
 //! * **Policy**: a slot is mounted as a Poring *dynamic route* ([`GuestRoute`]), so the host's
@@ -297,7 +297,7 @@ pub enum ReloadEvent {
         /// Short hash.
         sha256: String,
     },
-    /// A candidate was rejected; the previous version stayed active.
+    /// A candidate was rejected. The previous version stayed active.
     Rejected {
         /// Reason.
         reason: String,
@@ -307,7 +307,7 @@ pub enum ReloadEvent {
         /// Sequence now active.
         seq: u64,
     },
-    /// Candidate identical to the active version; ignored.
+    /// Candidate identical to the active version. Ignored.
     Unchanged,
 }
 
@@ -602,7 +602,7 @@ impl GuestSlot {
         self.calls.load(Ordering::Relaxed)
     }
 
-    /// Executes one request against the version active *now*; that version stays alive
+    /// Executes one request against the version active *now*. That version stays alive
     /// until the call completes, even if a reload happens meanwhile.
     pub async fn call(self: &Arc<Self>, req: DynRequest) -> Response {
         let lease = self.current();

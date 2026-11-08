@@ -1,0 +1,21 @@
+[package]
+name = "poring-consumer"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Template used by `scripts/verify-ci.sh package`: copied to a temporary directory next to
+# the extracted `.crate` files. A downstream crate built only from the packaged `.crate` files (no workspace, no path
+# into the repository): `poring` as published, `poring-macros` patched in place of the
+# not-yet-published registry version it pins.
+[dependencies]
+poring = { path = "vendor/poring", default-features = false, features = ["json", "websocket", "http2", "tls-rustls"] }
+serde = { version = "1", features = ["derive"] }
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = "0.30"
+futures-util = "0.3"
+
+[patch.crates-io]
+poring-macros = { path = "vendor/poring-macros" }
+
+[workspace]

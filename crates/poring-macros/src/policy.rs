@@ -68,6 +68,54 @@ pub struct PolicyDecl {
     pub csrf: Option<CsrfDecl>,
     pub timeout: Option<TimeoutDecl>,
     pub rate_limit: Option<RateDecl>,
+    pub ws_origins: Option<WsOriginsDecl>,
+}
+
+#[derive(Clone, Debug)]
+pub enum WsOriginsDecl {
+    Any,
+    Allow(Vec<String>),
+}
+
+/// Expansion-time check that `s` is a serialised `http`/`https` origin
+/// (`scheme://host[:port]`, no path, userinfo, query or fragment). Mirrors the runtime
+/// validation in `poring::policy::ws_origin`, which still re-checks at `build()`.
+fn valid_origin(s: &str) -> bool {
+    let Some((scheme, rest)) = s.split_once("://") else {
+        return false;
+    };
+    if !scheme.eq_ignore_ascii_case("http") && !scheme.eq_ignore_ascii_case("https") {
+        return false;
+    }
+    if rest.is_empty()
+        || rest
+            .bytes()
+            .any(|b| matches!(b, b'/' | b'?' | b'#' | b'@' | b'\\') || b <= b' ' || b >= 0x7f)
+    {
+        return false;
+    }
+    let (host, port) = if let Some(r) = rest.strip_prefix('[') {
+        let Some(end) = r.find(']') else {
+            return false;
+        };
+        match &r[end + 1..] {
+            "" => (&rest[..end + 2], None),
+            p => match p.strip_prefix(':') {
+                Some(p) => (&rest[..end + 2], Some(p)),
+                None => return false,
+            },
+        }
+    } else {
+        match rest.split_once(':') {
+            Some((h, p)) => (h, Some(p)),
+            None => (rest, None),
+        }
+    };
+    !host.is_empty()
+        && (!host.contains(['[', ']']) || host.starts_with('['))
+        && port.is_none_or(|p| {
+            !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()) && p.parse::<u16>().is_ok()
+        })
 }
 
 pub fn lit_str(e: &Expr) -> syn::Result<String> {
@@ -504,11 +552,34 @@ pub fn parse_policy(items: &[Meta], level: Level) -> syn::Result<PolicyDecl> {
                     Meta::Path(_) => return Err(err(m.span(), "use `rate_limit = \"10/s\"`")),
                 });
             }
+            "ws_origins" => {
+                let Meta::NameValue(nv) = m else {
+                    return Err(err(
+                        m.span(),
+                        "use `ws_origins = [\"https://app.example\"]` or `ws_origins = any`",
+                    ));
+                };
+                d.ws_origins = Some(match ident_of(&nv.value).as_deref() {
+                    Some("any") => WsOriginsDecl::Any,
+                    _ => {
+                        let list = str_list(&nv.value)?;
+                        if let Some(bad) = list.iter().find(|o| !valid_origin(o)) {
+                            return Err(err(
+                                nv.value.span(),
+                                format!(
+                                    "ws_origins: `{bad}` is not an origin like `https://host[:port]`"
+                                ),
+                            ));
+                        }
+                        WsOriginsDecl::Allow(list)
+                    }
+                });
+            }
             other => {
                 return Err(err(
                     m.span(),
                     format!(
-                        "unknown policy key `{other}` (expected auth, public, deny_anonymous, scopes, roles, body_limit, content_type, csrf, timeout, rate_limit)"
+                        "unknown policy key `{other}` (expected auth, public, deny_anonymous, scopes, roles, body_limit, content_type, csrf, timeout, rate_limit, ws_origins)"
                     ),
                 ));
             }
@@ -571,6 +642,11 @@ impl PolicyDecl {
                 ))
             }
         };
+        let ws_origins = match &self.ws_origins {
+            None => quote!(#p::WsOriginsSpec::Inherit),
+            Some(WsOriginsDecl::Any) => quote!(#p::WsOriginsSpec::Any),
+            Some(WsOriginsDecl::Allow(list)) => quote!(#p::WsOriginsSpec::Allow(&[#(#list),*])),
+        };
         quote! {
             #p::PolicySpec {
                 auth: #auth,
@@ -582,6 +658,7 @@ impl PolicyDecl {
                 csrf: #csrf,
                 timeout: #timeout,
                 rate_limit: #rate,
+                ws_origins: #ws_origins,
             }
         }
     }
@@ -595,5 +672,37 @@ pub fn parse_policy_meta(m: &Meta, level: Level) -> syn::Result<PolicyDecl> {
             parse_policy(&items.into_iter().collect::<Vec<_>>(), level)
         }
         _ => Err(err(m.span(), "expected `policy(...)`")),
+    }
+}
+
+#[cfg(test)]
+mod ws_origin_tests {
+    use super::valid_origin;
+
+    #[test]
+    fn origins() {
+        for ok in [
+            "https://a.example",
+            "http://a:8080",
+            "HTTPS://A",
+            "http://[::1]:9",
+        ] {
+            assert!(valid_origin(ok), "{ok}");
+        }
+        for bad in [
+            "*",
+            "null",
+            "a.example",
+            "ftp://a",
+            "https://",
+            "https://a/",
+            "https://u@a",
+            "https://a:",
+            "https://a:99999",
+            "https://a b",
+            "http://[::1",
+        ] {
+            assert!(!valid_origin(bad), "{bad}");
+        }
     }
 }

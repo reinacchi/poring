@@ -164,7 +164,7 @@ pub struct ExtractorDesc {
 /// One documented response of a route (derived from the handler's return type).
 #[derive(Clone, Debug, PartialEq)]
 pub struct ResponseDoc {
-    /// Status code; `0` means "varies / default".
+    /// Status code. `0` means "varies / default".
     pub status: u16,
     /// Content type, if known.
     pub content_type: Option<&'static str>,

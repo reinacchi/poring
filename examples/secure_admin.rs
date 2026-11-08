@@ -2,7 +2,7 @@
 //!
 //! * `deny_anonymous` app defaults: every route requires a principal unless it is an
 //!   explicit, documented public exception (`/health`).
-//! * `/admin` group requires role `admin`; deletes additionally require scope `users:delete`.
+//! * `/admin` group requires role `admin`. Deletes additionally require scope `users:delete`.
 //! * Session cookies are accepted, so unsafe methods enforce CSRF (double-submit).
 //! * Body limit, rate limit and timeout are declared, merged and enforced at runtime.
 //!

@@ -2,54 +2,122 @@ name: ci
 on: [push, pull_request]
 permissions:
   contents: read
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 env:
   CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
 
-# Core checks on one pinned Linux image and toolchain. Wasm guest, guest-kit and
-# cross-platform runs are local-only: `cargo test --workspace --all-features` and
-# `scripts/wasm_demo.sh` still cover them.
+# Every command lives in scripts/verify-ci.sh, so local verification
+# (`RUST_TOOLCHAIN=1.97.0 scripts/verify-ci.sh ci`) runs exactly what CI runs. The matrices
+# below name entries of the script's lists (an unknown entry fails the job).
+#
+# Every job pins the declared MSRV (`rust-version` = 1.97): the trybuild snapshots in
+# tests/ui record this compiler's exact diagnostics. Cargo commands run with `--locked`.
+#
+# Feature isolation: `poring-tests` and `poring-examples` depend on Poring without its
+# default features. Every optional feature is selected explicitly, and every integration
+# test declares `required-features`. A job therefore tests exactly the features it names.
+#
+# Actions are pinned by commit (Node 24 runtimes). Heavyweight jobs (Wasm family,
+# `--all-features`, the wasm32 guest, packaging) live in heavy.yml.
 jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
+        with: { toolchain: "1.97.0", components: "rustfmt, clippy" }
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: bash scripts/verify-ci.sh --fail-fast lint
+
   core:
     runs-on: ubuntu-24.04
+    timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
-      # Pinned to `rust-version`: the trybuild snapshots in tests/ui record this
-      # compiler's exact diagnostics.
-      - uses: dtolnay/rust-toolchain@master
-        with: { toolchain: "1.97.0", components: "rustfmt, clippy" }
-      # The generated TypeScript client is type-checked by tests/tests/contract.rs.
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
+        with: { toolchain: "1.97.0" }
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      # The generated TypeScript client is type-checked by tests/tests/contract.rs, and
+      # tests/interop/h2_ws_client.mjs is an independent RFC 8441 client (Node `http2`).
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with: { node-version: 22 }
-      - run: npm install -g typescript@7
-      - run: cargo fmt --all -- --check
-      - run: cargo clippy -p poring --all-targets --features websocket,multipart,http2 -- -D warnings
-      - run: cargo clippy -p poring-macros --all-targets -- -D warnings
-      - run: cargo clippy -p poring-tests -p poring-examples --all-targets --no-default-features -- -D warnings
-      - run: cargo test -p poring --features websocket,multipart
-      - run: cargo test -p poring-macros
-      - run: cargo test -p poring-tests --no-default-features
-      - run: cargo test -p poring-examples --no-default-features --example secure_admin
+      - run: npm install -g typescript@7.0.2
+      - run: bash scripts/verify-ci.sh --fail-fast core
 
   features:
+    name: poring ${{ matrix.flags }}
     runs-on: ubuntu-24.04
+    timeout-minutes: 40
     strategy:
+      fail-fast: false
       matrix:
         flags:
           - "--no-default-features"
           - "--no-default-features --features json"
-          - "--features http2"
-          - "--features websocket,multipart,http2"
+          - "--no-default-features --features trace-flow"
+          - "--no-default-features --features openapi"
+          - "--no-default-features --features http2"
+          - "--no-default-features --features websocket"
+          - "--no-default-features --features multipart"
+          - "--no-default-features --features tls-rustls"
+          - "--no-default-features --features websocket,http2"
+          - "--no-default-features --features websocket,multipart"
+          - "--no-default-features --features websocket,multipart,http2"
+          - "--no-default-features --features websocket,tls-rustls"
+          - "--no-default-features --features websocket,http2,tls-rustls"
+          - "default"
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@master
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
         with: { toolchain: "1.97.0" }
-      - run: cargo check -p poring ${{ matrix.flags }}
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: bash scripts/verify-ci.sh --fail-fast features "${{ matrix.flags }}"
+
+  isolated-tests:
+    name: integration tests --features ${{ matrix.features }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        features:
+          - "json,trace-flow"
+          - "json,openapi,trace-flow"
+          - "websocket"
+          - "multipart"
+          - "websocket,http2"
+          - "websocket,tls"
+          - "websocket,http2,tls"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
+        with: { toolchain: "1.97.0" }
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with: { node-version: 22 }
+      - run: npm install -g typescript@7.0.2
+      - run: bash scripts/verify-ci.sh --fail-fast isolated-tests "${{ matrix.features }}"
+
+  examples:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
+        with: { toolchain: "1.97.0" }
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: bash scripts/verify-ci.sh --fail-fast examples
 
   docs:
     runs-on: ubuntu-24.04
+    timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@master
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
         with: { toolchain: "1.97.0" }
-      - run: cargo doc --no-deps -p poring -p poring-macros --features poring/websocket,poring/multipart,poring/http2
-        env: { RUSTDOCFLAGS: "-D warnings" }
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: bash scripts/verify-ci.sh --fail-fast docs

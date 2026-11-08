@@ -1,7 +1,7 @@
 {
   "format_version": 1,
   "app": "SecureApp",
-  "poring_version": "0.1.2",
+  "poring_version": "0.1.3",
   "authenticator": "TableAuth",
   "cors": {
     "origins": [
@@ -28,8 +28,8 @@
       "path": "/health",
       "handler": "health",
       "source": {
-        "file": "tests/src/secure.rs",
-        "line": 120
+        "file": "tests/src/secure_app.rs",
+        "line": 61
       },
       "group": null,
       "extractors": [],
@@ -75,8 +75,8 @@
       "path": "/notes",
       "handler": "list_notes",
       "source": {
-        "file": "tests/src/secure.rs",
-        "line": 126
+        "file": "tests/src/secure_app.rs",
+        "line": 67
       },
       "group": null,
       "extractors": [
@@ -134,8 +134,8 @@
       "path": "/notes",
       "handler": "create_note",
       "source": {
-        "file": "tests/src/secure.rs",
-        "line": 135
+        "file": "tests/src/secure_app.rs",
+        "line": 76
       },
       "group": null,
       "extractors": [
@@ -220,8 +220,8 @@
       "path": "/me",
       "handler": "me",
       "source": {
-        "file": "tests/src/secure.rs",
-        "line": 152
+        "file": "tests/src/secure_app.rs",
+        "line": 93
       },
       "group": null,
       "extractors": [
@@ -284,8 +284,8 @@
       "path": "/slow",
       "handler": "slow",
       "source": {
-        "file": "tests/src/secure.rs",
-        "line": 158
+        "file": "tests/src/secure_app.rs",
+        "line": 99
       },
       "group": null,
       "extractors": [],
@@ -332,8 +332,8 @@
       "path": "/webhook",
       "handler": "webhook",
       "source": {
-        "file": "tests/src/secure.rs",
-        "line": 165
+        "file": "tests/src/secure_app.rs",
+        "line": 106
       },
       "group": null,
       "extractors": [
@@ -388,8 +388,8 @@
       "path": "/admin/stats",
       "handler": "admin_stats",
       "source": {
-        "file": "tests/src/secure.rs",
-        "line": 171
+        "file": "tests/src/secure_app.rs",
+        "line": 112
       },
       "group": "/admin",
       "extractors": [
