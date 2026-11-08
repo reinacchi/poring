@@ -10,7 +10,7 @@ repository.workspace = true
 homepage.workspace = true
 documentation = "https://docs.rs/poring"
 # Tests are not part of the published crate.
-exclude = ["tests/"]
+exclude = ["tests/", "benches/"]
 
 [lib]
 proc-macro = true

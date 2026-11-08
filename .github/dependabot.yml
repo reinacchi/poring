@@ -9,9 +9,6 @@ updates:
     groups:
       patch-and-minor:
         update-types: [minor, patch]
-  - package-ecosystem: cargo
-    directory: "/benches/ws-bench"
-    schedule: { interval: monthly }
   - package-ecosystem: github-actions
     directory: "/"
     schedule: { interval: weekly, day: monday }

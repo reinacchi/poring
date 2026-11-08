@@ -1,2 +1,4 @@
 target/
+# Local benchmark and stress harnesses: kept out of the repository and the packages.
+benches/
 examples/wasm-guest/Cargo.lock

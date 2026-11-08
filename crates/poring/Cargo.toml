@@ -13,7 +13,7 @@ readme = "../../README.md"
 keywords = ["web", "http", "framework", "security", "wasm"]
 categories = ["web-programming::http-server", "network-programming", "wasm"]
 # Tests are not part of the published crate.
-exclude = ["tests/"]
+exclude = ["tests/", "benches/"]
 
 [features]
 default = ["json", "trace-flow", "openapi"]

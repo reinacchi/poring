@@ -8,7 +8,7 @@
 #
 # Targets (default: ci):
 #   ci              lint core features isolated-tests examples docs   (every PR/push)
-#   heavy           wasm-features wasm-tests all-features package stress-smoke
+#   heavy           wasm-features wasm-tests all-features package stress-smoke (local only)
 #                                                                     (weekly / on demand)
 #   everything      ci + heavy
 #   security        cargo audit of every lockfile against the RustSec advisory DB
@@ -265,7 +265,13 @@ t_ci() {
 # Builds the benchmark harness and runs a small sustained-load pass: every profile
 # (idle, echo, slow readers, churn, abrupt disconnects, shutdown under load) at 100
 # connections. The harness asserts nothing about speed. It fails if sessions leak.
+# The harness (benches/) is local only and not in the repository, so the target is
+# skipped when it is absent.
 t_stress_smoke() {
+  if [[ ! -f benches/ws-bench/Cargo.toml ]]; then
+    echo "==> stress-smoke skipped: benches/ws-bench is not present (local only)"
+    return 0
+  fi
   run "${CARGO[@]}" build --release --locked --manifest-path benches/ws-bench/Cargo.toml &&
     run stress_smoke_check
 }

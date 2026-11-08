@@ -36,6 +36,10 @@ echo "fd limit: $(ulimit -n)"
 if (( $(ulimit -n) < CONNS * 2 + 256 )); then
   echo "warning: ulimit -n is below 2*CONNS+256; the client and server share this host" >&2
 fi
+if [[ ! -f benches/ws-bench/Cargo.toml ]]; then
+  echo "soak: benches/ws-bench is not present (it is kept out of the repository)" >&2
+  exit 1
+fi
 cargo build --release --locked --manifest-path benches/ws-bench/Cargo.toml || exit 1
 
 FAILED=0
