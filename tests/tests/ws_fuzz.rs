@@ -6,12 +6,12 @@
 //! lengths, invalid close codes and plain garbage. Whatever arrives, the server must:
 //!
 //! * never panic (`sessions_panicked` stays 0) and never hang a session (every session ends
-//!   within a bounded time once the client goes away);
+//!   within a bounded time once the client goes away).
 //! * answer protocol violations with a close frame whose code is one that may be sent on
-//!   the wire (never 1005/1006/1015 or a reserved code);
+//!   the wire (never 1005/1006/1015 or a reserved code).
 //! * keep serving new handshakes.
 //!
-//! The case count is modest so the suite stays fast; raise it locally with
+//! The case count is modest so the suite stays fast. Raise it locally with
 //! `PROPTEST_CASES=2000 cargo test -p poring-tests --test ws_fuzz`.
 
 use std::net::SocketAddr;
@@ -259,7 +259,7 @@ fn malformed_websocket_input_never_panics_hangs_or_sends_reserved_codes() {
             .block_on(run_case(addr, path, &pieces))
             .map_err(TestCaseError::fail)?;
         if let Some(code) = code {
-            // Raw sockets send whatever the application sends; Poring's managed and typed
+            // Raw sockets send whatever the application sends. Poring's managed and typed
             // sessions must keep reserved codes off the wire.
             if path != "/raw" {
                 prop_assert!(sendable(code), "{path} sent close code {code}");
@@ -270,7 +270,7 @@ fn malformed_websocket_input_never_panics_hangs_or_sends_reserved_codes() {
     if let Err(e) = result {
         panic!("{e}");
     }
-    // Every session ends once its client is gone; nothing panicked.
+    // Every session ends once its client is gone. Nothing panicked.
     let deadline = Instant::now() + Duration::from_secs(15);
     loop {
         let stats = server.ws_stats();

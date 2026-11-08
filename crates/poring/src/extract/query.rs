@@ -2,7 +2,7 @@
 //!
 //! Policy: the raw query is limited to `Limits::max_query_bytes` (default 8 KiB) and
 //! `Limits::max_form_fields` pairs (default 256). Repeated keys deserialize into
-//! `Vec<T>` fields; for a scalar field a repeated key is rejected (400) rather than
+//! `Vec<T>` fields. For a scalar field a repeated key is rejected (400) rather than
 //! silently picking one occurrence. Values are coerced
 //! from strings into the declared Rust types, then validated.
 

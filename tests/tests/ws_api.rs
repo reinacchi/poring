@@ -1,4 +1,4 @@
-//! WebSocket developer API and observability over real TCP (P5.3, P5.4): fluent `ws()`
+//! WebSocket developer API and observability over real TCP: fluent `ws()`
 //! registration, handshake metadata, typed managed sockets, `ManagedSocket::split`, and
 //! `WsStats` counters.
 
@@ -195,7 +195,7 @@ async fn split_managed_sockets_allow_concurrent_senders() {
             ws.managed().on_upgrade(|sock: ManagedSocket| async move {
                 let (mut rx, tx) = sock.split();
                 // Two writer tasks run concurrently with the reader (inside the session
-                // future; nothing is detached).
+                // future, nothing is detached).
                 let writer = |name: &'static str, tx: poring::ws::ManagedSender| async move {
                     for i in 0..20 {
                         if tx.send(Message::text(format!("{name}{i}"))).await.is_err() {
@@ -359,7 +359,7 @@ async fn ws_stats_count_handshakes_sessions_messages_and_failures() {
     assert_eq!(s.sessions_panicked, 1);
     assert_eq!(s.active_sessions, 0);
     assert_eq!(s.sessions_ended, 5);
-    // a: 3 admitted + 1 refused received; b: 2. Sent: a 3, b 2. Plus the 2-byte invalid
+    // a: 3 admitted + 1 refused received, b: 2. Sent: a 3, b 2. Plus the 2-byte invalid
     // frame (counted as received bytes? no: it fails decoding before delivery).
     assert_eq!(s.messages_received, 6);
     assert_eq!(s.messages_sent, 5);

@@ -1,4 +1,4 @@
-//! WebSocket message limits over real TCP (P5.2): per-session message rates, shared per-IP
+//! WebSocket message limits over real TCP: per-session message rates, shared per-IP
 //! and per-principal quotas, per-client session caps, frame vs message size limits and
 //! control frames interleaved with fragments.
 
@@ -259,14 +259,14 @@ async fn per_ip_and_per_principal_session_caps_return_429() {
     )
     .await;
     let addr = server.local_addr();
-    // Per principal: alice may hold one session; bob is independent.
+    // Per principal: alice may hold one session and bob is independent.
     let alice = connect(addr, "/auth", Some("reader-token")).await.unwrap();
     assert_eq!(
         connect(addr, "/auth", Some("reader-token")).await.err(),
         Some(429)
     );
     let bob = connect(addr, "/auth", Some("writer-token")).await.unwrap();
-    // Per IP: alice + bob + one anonymous = 3 sessions from 127.0.0.1; the fourth is refused.
+    // Per IP: alice + bob + one anonymous = 3 sessions from 127.0.0.1. The fourth is refused.
     let mut anon = connect(addr, "/m", None).await.unwrap();
     assert_eq!(connect(addr, "/m", None).await.err(), Some(429));
     // Releasing a session frees its slot.

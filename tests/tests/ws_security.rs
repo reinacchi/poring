@@ -1,4 +1,4 @@
-//! WebSocket handshake security over real TCP (Phase 2, P2.1 Origin enforcement).
+//! WebSocket handshake security over real TCP.
 //!
 //! Raw HTTP/1.1 requests are used so that malformed and adversarial handshakes can be
 //! expressed exactly. Every denial must happen before `101 Switching Protocols`.
@@ -80,7 +80,7 @@ async fn plain_app(started: Started) -> poring::Server {
         .unwrap()
 }
 
-/// An app with explicit CORS origins and a cookie-capable authenticator; `/ws` requires
+/// An app with explicit CORS origins and a cookie-capable authenticator. `/ws` requires
 /// authentication.
 async fn cookie_app(started: Started) -> poring::Server {
     Poring::new()
@@ -264,7 +264,7 @@ async fn http_cors_semantics_for_plain_get_are_unchanged() {
     let server = cookie_app(started).await;
     let addr = server.local_addr();
     // A non-upgrade GET from a disallowed origin is still served (CORS only withholds the
-    // Access-Control headers); only unsafe methods are rejected.
+    // Access-Control headers). Only unsafe methods are rejected.
     let req = format!(
         "GET /data HTTP/1.1\r\nHost: {addr}\r\nOrigin: https://evil.example\r\nConnection: close\r\n\r\n"
     );
@@ -282,7 +282,7 @@ async fn http_cors_semantics_for_plain_get_are_unchanged() {
     server2.shutdown().await.unwrap();
 }
 
-// ---- P2.2: RFC 6455 §4.2.1 handshake strictness -------------------------------------
+// ---- RFC 6455 §4.2.1 handshake strictness -------------------------------------
 
 /// A handshake with explicit header lines (no defaults besides Host/Connection/Upgrade).
 fn raw_ws(addr: SocketAddr, version: &str, headers: &str) -> String {
@@ -441,7 +441,7 @@ async fn non_http11_and_non_get_handshakes_are_rejected() {
     server.shutdown().await.unwrap();
 }
 
-// ---- P2.3: subprotocol negotiation (RFC 6455 §4.2.2 item 5.4, §11.3.4) ----------------
+// ---- Subprotocol negotiation (RFC 6455 §4.2.2 item 5.4, §11.3.4) ----------------
 
 use std::sync::Mutex;
 
@@ -679,7 +679,7 @@ async fn tungstenite_client_accepts_negotiated_protocol() {
     server.shutdown().await.unwrap();
 }
 
-// ---- P2.4: property tests over real TCP -----------------------------------------------
+// ---- Property tests over real TCP -----------------------------------------------
 //
 // Each property compares the server's status with an independent oracle written from the
 // RFC text (not by calling Poring's helpers), and checks that no input yields 5xx or a
@@ -819,7 +819,7 @@ mod props {
     }
 }
 
-// ---- P2.1 follow-up 1 (ADR-011): dedicated WebSocket origin configuration --------------
+// ---- Dedicated WebSocket origin configuration --------------
 
 use poring::policy::WsOrigins;
 
@@ -973,7 +973,7 @@ async fn ws_origins_survive_later_state_and_authenticator_calls() {
     server.shutdown().await.unwrap();
 }
 
-// ---- P2.1a (per-route): `Policy::ws_origins` and `policy(ws_origins = ..)` -------------
+// ---- Per-route origins: `Policy::ws_origins` and `policy(ws_origins = ..)` -------------
 
 async fn origin_status(addr: SocketAddr, path: &str, origin: &str) -> u16 {
     status_of(
@@ -1024,7 +1024,7 @@ async fn route_and_group_ws_origins_override_the_app_default() {
         // App default list.
         ("/ws", "https://app-wide.example", 101),
         ("/ws", "https://partner.example", 403),
-        // Route list replaces the app list; same-origin is always allowed.
+        // Route list replaces the app list. Same-origin is always allowed.
         ("/partner", "https://partner.example", 101),
         ("/partner", "https://app-wide.example", 403),
         ("/partner", same.as_str(), 101),
@@ -1155,7 +1155,7 @@ fn macro_ws_origins_any_is_refused_with_cookie_authentication() {
     assert!(err.contains("ws_origins"), "{err}");
 }
 
-// ---- P2.1b: public host from trusted reverse proxies -----------------------------------
+// ---- Public host from trusted reverse proxies -----------------------------------
 
 /// A handshake with an explicit `Host` and extra header lines.
 fn proxied(host: &str, extra: &str) -> String {
@@ -1225,7 +1225,7 @@ async fn trusted_proxy_forwarded_host_counts_as_same_origin() {
             "X-Forwarded-Host: public.example\r\nX-Forwarded-Proto: ftp\r\nOrigin: https://public.example\r\n",
             403,
         ),
-        // RFC 7239 Forwarded (single element; quoted values allowed).
+        // RFC 7239 Forwarded (single element, quoted values allowed).
         (
             "Forwarded: for=192.0.2.1;host=public.example;proto=https\r\nOrigin: https://public.example\r\n",
             101,
@@ -1281,7 +1281,7 @@ async fn forwarded_host_from_untrusted_peers_is_ignored() {
     }
 }
 
-// ---- P2.1c: the WebSocket origin check in static contracts and runtime traces ---------
+// ---- The WebSocket origin check in static contracts and runtime traces ---------
 
 mod contract {
     use super::*;

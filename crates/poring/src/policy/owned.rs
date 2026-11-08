@@ -364,7 +364,7 @@ impl Default for Cors {
 }
 
 impl Cors {
-    /// No allowed origins yet; preflight responses are cached for 10 minutes.
+    /// No allowed origins yet. Preflight responses are cached for 10 minutes.
     pub fn new() -> Self {
         Cors::default()
     }

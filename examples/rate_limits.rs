@@ -35,7 +35,7 @@ async fn quota(status: RateLimitStatus) -> String {
 fn app() -> Result<poring::FluentApp<(), Tokens>, poring::StartupError> {
     Poring::new()
         .authenticator(Tokens)
-        // Applies in addition to every other limit; routes cannot opt out.
+        // Applies in addition to every other limit. Routes cannot opt out.
         .rate_limit_ceiling(RateLimit::new(1_000, Duration::from_secs(60)).by_ip())
         .group("/api", |api| {
             api.policy(Policy::new().public())

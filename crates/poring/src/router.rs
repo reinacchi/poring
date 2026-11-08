@@ -202,7 +202,7 @@ impl Router {
 
     /// Lookup for an HTTP/2 Extended CONNECT WebSocket handshake (RFC 8441). Only the
     /// path's `GET` route can match, and only when `is_websocket` says it is a WebSocket
-    /// route; anything else is `405` with the path's `Allow`. No other method's route is
+    /// route. Anything else is `405` with the path's `Allow`. No other method's route is
     /// ever selected, so CONNECT can never reach a non-WebSocket handler (no tunnels).
     pub(crate) fn lookup_websocket<'r>(
         &'r self,

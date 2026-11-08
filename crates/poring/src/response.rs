@@ -295,7 +295,7 @@ impl IntoResponse for Redirect {
 /// A JSON request extractor / response.
 ///
 /// As an extractor it requires `Content-Type: application/json` (or `+json`), enforces the
-/// route's body limit while reading, deserializes with serde_json (recursion limit 128)
+/// route's body limit while reading, deserialises with serde_json (recursion limit 128)
 /// and then runs the type's declarative validation rules (see [`crate::PoringSchema`]).
 #[cfg(feature = "json")]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -483,7 +483,7 @@ pub mod describe {
     }
     impl<T: DescribeResponse> DescribeResponse for (StatusCode, T) {
         fn describe(reg: &mut SchemaRegistry) -> Vec<ResponseDoc> {
-            // The status is a runtime value; document the body under "default".
+            // The status is a runtime value. Document the body under "default".
             T::describe(reg)
                 .into_iter()
                 .map(|mut d| {

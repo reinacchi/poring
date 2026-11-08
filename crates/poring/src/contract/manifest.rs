@@ -90,7 +90,7 @@ pub enum RouteKind {
     /// Registered at startup (e.g. a Wasm guest). Validated at startup/reload only.
     Dynamic,
     /// A typed native handler registered through the fluent API. Handler, extractor and
-    /// state types are checked by the compiler; paths and policies are validated at startup.
+    /// state types are checked by the compiler. Paths and policies are validated at startup.
     Native,
 }
 
@@ -167,7 +167,7 @@ pub struct PolicyView {
     /// App-wide ceiling enforced in addition to `rate_limit`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rate_limit_ceiling: Option<RateLimitView>,
-    /// WebSocket origins declared for this route (`["*"]` = any); absent when the app
+    /// WebSocket origins declared for this route (`["*"]` = any). Absent when the app
     /// default applies.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ws_origins: Option<Vec<String>>,

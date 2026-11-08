@@ -1,4 +1,4 @@
-//! WebSocket stress tests over real TCP (Phase 3, P3.5): many concurrent sessions,
+//! WebSocket stress tests over real TCP: many concurrent sessions,
 //! non-reading clients, vanishing clients, panicking/cancelled handlers, fragment floods and
 //! shutdown under load. Every test asserts that session counts and connection slots return
 //! to zero and that nothing waits without a bound.
@@ -135,7 +135,7 @@ async fn echo_session(addr: SocketAddr, n: usize) {
     while ws.next().await.is_some() {}
 }
 
-/// Concurrent sessions per round (default 500; override with `PORING_STRESS_SESSIONS`).
+/// Concurrent sessions per round (default 500, override with `PORING_STRESS_SESSIONS`).
 fn sessions() -> usize {
     std::env::var("PORING_STRESS_SESSIONS")
         .ok()

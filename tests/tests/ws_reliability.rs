@@ -174,7 +174,7 @@ impl Raw {
         Some(Frame { opcode, payload })
     }
 
-    /// Reads until a close frame; returns its code and reason, counting pings seen.
+    /// Reads until a close frame. Returns its code and reason, counting pings seen.
     async fn until_close(&mut self, wait: Duration) -> (Option<u16>, String, usize) {
         let deadline = Instant::now() + wait;
         let mut pings = 0;
@@ -452,7 +452,7 @@ async fn completed_sessions_leave_nothing_behind_while_idle() {
         ws.close(None).await.unwrap();
         while let Some(Ok(_)) = ws.next().await {}
     }
-    // No further handshake arrives; the server sits idle.
+    // No further handshake arrives. The server sits idle.
     eventually("all ended", || server.ws_stats().sessions_ended == 200).await;
     let s = server.ws_stats();
     assert_eq!(s.active_sessions, 0);

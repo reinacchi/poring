@@ -5,7 +5,7 @@
 //! (and builds without the `trace-flow` feature) do no recording work at all: the context
 //! holds `None` and every `mark` is a single branch.
 //!
-//! Recording never touches request/response bodies, headers, cookies or tokens; it stores
+//! Recording never touches request/response bodies, headers, cookies or tokens. It stores
 //! stage identifiers, timings, the matched route ID, the status and the correlation ID.
 
 use std::collections::VecDeque;
@@ -193,7 +193,7 @@ impl FlowState {
 ///
 /// Recording is compiled in only with the `trace-flow` feature (on by default). Without it
 /// the configuration is accepted but nothing is sampled, stored or allocated, and
-/// [`FlowRecorder::is_active`] is `false`; static flow graphs and contracts are unaffected.
+/// [`FlowRecorder::is_active`] is `false`. Static flow graphs and contracts are unaffected.
 #[derive(Clone, Copy, Debug)]
 pub struct FlowConfig {
     /// Record 1 in `sample_every` requests (1 = every request). 0 disables recording.

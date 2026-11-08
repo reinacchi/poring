@@ -98,17 +98,6 @@ pub use poring_macros::{
 pub use bytes::Bytes;
 pub use http::{self, HeaderMap, HeaderValue, Method, StatusCode, Uri};
 
-// Compiles the code blocks of `docs/guide.md` (repository only; not part of the package).
-#[cfg(all(
-    doctest,
-    feature = "json",
-    feature = "websocket",
-    feature = "http2",
-    feature = "tls-rustls"
-))]
-#[doc = include_str!("../../../docs/guide.md")]
-mod guide_doctests {}
-
 /// Everyday imports.
 pub mod prelude {
     pub use crate::descriptor::Method as RouteMethod;
@@ -119,13 +108,14 @@ pub mod prelude {
     pub use crate::fluent::Poring;
     pub use crate::policy::{
         AuthError, AuthRequest, Authenticator, Cors, Credential, Identity, Policy, RateKey,
-        RateLimit, RateLimitStatus, RateScope,
+        RateLimit, RateLimitStatus, RateScope, WsOrigins,
     };
     #[cfg(feature = "json")]
     pub use crate::response::Json;
     pub use crate::response::{Html, IntoResponse, Redirect, Response};
     pub use crate::{
-        ApiError, Body, Bytes, Ctx, HeaderMap, HeaderValue, PoringSchema, RequestId, StatusCode,
+        ApiError, Body, Bytes, Ctx, HeaderMap, HeaderValue, Limits, PoringSchema, RequestId,
+        StatusCode,
     };
     pub use poring_macros::{PoringState, poring_app, poring_plugin};
 }
@@ -262,7 +252,7 @@ pub mod __private {
     pub trait BeforeHook<S> {
         /// Hook name.
         const NAME: &'static str;
-        /// Runs the hook; `Err(response)` short-circuits.
+        /// Runs the hook. `Err(response)` short-circuits.
         fn before<'a, 'c>(
             cx: &'c mut Ctx<'a, S>,
         ) -> impl Future<Output = Result<(), Response>> + Send + 'c;

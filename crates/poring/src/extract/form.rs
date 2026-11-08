@@ -9,7 +9,7 @@ use crate::extract::query::parse_urlencoded;
 use crate::extract::{ExtractorMeta, FromRequest, read_body};
 use crate::schema::PoringSchema;
 
-/// Typed urlencoded form body (flat; no nesting, bounded field count).
+/// Typed urlencoded form body (flat, no nesting, bounded field count).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Form<T>(pub T);
 

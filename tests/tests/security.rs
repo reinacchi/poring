@@ -50,7 +50,7 @@ async fn unauthenticated_requests_are_rejected_except_on_public_routes() {
         c.get("/notes").bearer("reader-token").send().await.status,
         200
     );
-    // Only the two successful requests ran user hooks; denials never reach user code.
+    // Only the two successful requests ran user hooks. Denials never reach user code.
     assert_eq!(hook_count(&events), 2);
 }
 
@@ -154,7 +154,7 @@ async fn csrf_enforced_for_cookie_sessions_only() {
         .send()
         .await;
     assert_eq!(r.status, 201);
-    // Safe methods with cookie auth need no token; bearer auth is not CSRF-relevant.
+    // Safe methods with cookie auth need no token. Bearer auth is not CSRF-relevant.
     assert_eq!(
         c.get("/notes")
             .header("cookie", "sid=session-bob")

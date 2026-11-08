@@ -16,7 +16,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::task::{Context, Poll};
 
-/// A set of owned tasks (cheap to clone; clones share the set).
+/// A set of owned tasks (cheap to clone, clones share the set).
 #[derive(Clone)]
 pub(crate) struct TaskTracker {
     inner: Arc<Inner>,
@@ -34,7 +34,7 @@ struct State {
     /// [`TaskTracker::abort_all`] ran: nothing is spawned any more.
     aborted: bool,
     next: u64,
-    /// Live tasks by id; `None` while a task is being spawned.
+    /// Live tasks by id. `None` while a task is being spawned.
     tasks: HashMap<u64, Option<tokio::task::AbortHandle>>,
 }
 
@@ -87,7 +87,7 @@ impl TaskTracker {
         self.spawn_inner(fut, true)
     }
 
-    /// Spawns `fut` unless the tracker was aborted — also while it drains after
+    /// Spawns `fut` unless the tracker was aborted. This includes the drain after
     /// [`close`](Self::close) (work that belongs to an already admitted connection).
     #[cfg_attr(not(feature = "http2"), allow(dead_code))]
     pub(crate) fn spawn_draining(&self, fut: impl Future<Output = ()> + Send + 'static) -> bool {
@@ -136,7 +136,7 @@ impl TaskTracker {
         true
     }
 
-    /// Stops [`spawn`](Self::spawn) from accepting work; running tasks continue.
+    /// Stops [`spawn`](Self::spawn) from accepting work. Running tasks continue.
     pub(crate) fn close(&self) {
         lock(&self.inner.state).accepting = false;
     }
@@ -148,7 +148,7 @@ impl TaskTracker {
     }
 
     /// Number of tasks still registered in the set (equals [`len`](Self::len) except
-    /// transiently); finished tasks never linger here.
+    /// transiently). Finished tasks never linger here.
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn registered(&self) -> usize {
         lock(&self.inner.state).tasks.len()
@@ -161,7 +161,7 @@ impl TaskTracker {
     }
 
     /// Aborts every task and refuses all further spawns. Aborted tasks are dropped at their
-    /// next await point; use [`wait_idle`](Self::wait_idle) to wait for that.
+    /// next await point. Use [`wait_idle`](Self::wait_idle) to wait for that.
     pub(crate) fn abort_all(&self) -> usize {
         let handles: Vec<_> = {
             let mut st = lock(&self.inner.state);
@@ -274,7 +274,7 @@ mod tests {
     }
 
     /// Tokio drops a task spawned onto a runtime that is shutting down synchronously, inside
-    /// `spawn`; the entry's removal must not deadlock against the registration.
+    /// `spawn`. The entry's removal must not deadlock against the registration.
     #[test]
     fn spawning_onto_a_shut_down_runtime_does_not_deadlock() {
         let rt = tokio::runtime::Builder::new_multi_thread()

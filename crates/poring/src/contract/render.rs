@@ -21,7 +21,7 @@ fn escape_label(s: &str) -> String {
 
 /// Renders the static graph as a Mermaid flowchart.
 ///
-/// Solid arrows are normal transitions; dotted arrows are possible denial, error or
+/// Solid arrows are normal transitions. Dotted arrows are possible denial, error or
 /// short-circuit branches.
 pub fn render_mermaid(g: &FlowGraph) -> String {
     render_mermaid_inner(g, None)
@@ -29,7 +29,7 @@ pub fn render_mermaid(g: &FlowGraph) -> String {
 
 /// Renders the static graph with the edges actually traversed by `trace` highlighted.
 ///
-/// Static (possible) edges keep their normal style; runtime-traversed edges are drawn
+/// Static (possible) edges keep their normal style. Runtime-traversed edges are drawn
 /// thick and green and visited nodes get the `visited` class.
 pub fn render_mermaid_with_trace(g: &FlowGraph, trace: &RuntimeTrace) -> String {
     render_mermaid_inner(g, Some(trace))

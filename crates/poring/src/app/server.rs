@@ -14,7 +14,7 @@ use super::tasks::{TaskScope, TaskTracker};
 use super::{App, AppSpec};
 
 impl<A: AppSpec> App<A> {
-    /// Binds `addr` and serves in a background task; returns a handle for shutdown.
+    /// Binds `addr` and serves in a background task. Returns a handle for shutdown.
     pub async fn bind(self, addr: impl tokio::net::ToSocketAddrs) -> std::io::Result<Server> {
         let listener = tokio::net::TcpListener::bind(addr).await?;
         let local = listener.local_addr()?;
@@ -183,9 +183,9 @@ impl<A: AppSpec> App<A> {
         if drained.is_err() {
             tracing::warn!("graceful shutdown grace period elapsed with connections still open");
         }
-        // Whatever is still running after the grace period is cancelled — connection tasks
-        // (which aborts their HTTP/2 stream tasks too) and WebSocket sessions — so nothing
-        // outlives `serve`.
+        // Whatever is still running after the grace period is cancelled, so nothing outlives
+        // `serve`. That covers connection tasks (which aborts their HTTP/2 stream tasks too)
+        // and WebSocket sessions.
         let bound = grace.max(Duration::from_millis(100));
         let aborted = connections.0.abort_all();
         if aborted > 0 {

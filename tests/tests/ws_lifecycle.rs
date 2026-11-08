@@ -1,4 +1,4 @@
-//! WebSocket session lifecycle over real TCP (Phase 3): admission, accounting, permit
+//! WebSocket session lifecycle over real TCP: admission, accounting, permit
 //! reclamation and bounded shutdown.
 
 use std::net::SocketAddr;
@@ -299,7 +299,7 @@ async fn shutdown_without_sessions_is_not_delayed() {
 #[allow(dead_code)]
 fn _unused(_: AtomicBool) {}
 
-// ---- P3.2: graceful shutdown -----------------------------------------------------------
+// ---- Graceful shutdown -----------------------------------------------------------
 
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
@@ -493,7 +493,7 @@ async fn upgrades_cannot_start_once_shutdown_has_begun() {
     );
 }
 
-// ---- P3.3: liveness (managed sessions) and lifetime ------------------------------------
+// ---- Liveness (managed sessions) and lifetime ------------------------------------
 
 use poring::ws::ManagedSocket;
 
@@ -652,7 +652,7 @@ async fn max_lifetime_ends_raw_and_managed_sessions() {
     let mut raw = client(addr, "/raw").await;
     let mut managed = client(addr, "/managed").await;
     assert!(wait_until(|| probe.live.load(Ordering::SeqCst) == 2).await);
-    // The managed session closes with a frame (reading it lets the client reply); the raw
+    // The managed session closes with a frame (reading it lets the client reply). The raw
     // one is simply dropped.
     assert_eq!(close_code(&mut managed).await, Some(CloseCode::Away));
     // Keep reading so the client flushes its close reply.
@@ -713,7 +713,7 @@ async fn managed_sessions_close_normally_and_on_shutdown_even_if_the_app_is_stuc
     assert!(started.elapsed() < Duration::from_secs(3));
 }
 
-// ---- P3.4: close semantics -------------------------------------------------------------
+// ---- Close semantics -------------------------------------------------------------
 
 /// Server with a managed (`/m`) and a typed (`/t`) echo endpoint, both limited to 1 KiB
 /// messages. `ended` counts handlers that observed the end of their session.
@@ -789,7 +789,7 @@ async fn serve_close_endpoints(ended: Arc<AtomicUsize>) -> poring::Server {
         .unwrap()
 }
 
-/// Performs the handshake by hand; the returned stream is positioned at the first frame.
+/// Performs the handshake by hand. The returned stream is positioned at the first frame.
 async fn raw_ws(addr: SocketAddr, path: &str) -> tokio::net::TcpStream {
     let mut tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
     tcp.write_all(ws_req(addr, path).as_bytes()).await.unwrap();
@@ -825,7 +825,7 @@ async fn send_frame(tcp: &mut tokio::net::TcpStream, first: u8, payload: &[u8]) 
     tcp.write_all(&f).await.unwrap();
 }
 
-/// Reads one unfragmented server frame: (opcode, payload); `None` on EOF.
+/// Reads one unfragmented server frame: (opcode, payload). `None` on EOF.
 async fn read_frame(tcp: &mut tokio::net::TcpStream) -> Option<(u8, Vec<u8>)> {
     let b0 = tcp.read_u8().await.ok()?;
     let b1 = tcp.read_u8().await.ok()?;
@@ -840,7 +840,7 @@ async fn read_frame(tcp: &mut tokio::net::TcpStream) -> Option<(u8, Vec<u8>)> {
     Some((b0 & 0x0f, p))
 }
 
-/// Reads server frames until a close frame; returns its payload (`None` on EOF/timeout).
+/// Reads server frames until a close frame. Returns its payload (`None` on EOF/timeout).
 /// Also returns the payloads of data frames seen before it.
 async fn read_until_close(tcp: &mut tokio::net::TcpStream) -> (Vec<Vec<u8>>, Option<Vec<u8>>) {
     let mut data = Vec::new();
@@ -1089,7 +1089,7 @@ async fn oversized_messages_fail_with_1009() {
     server.shutdown().await.unwrap();
 }
 
-// ---- P4.4 finding: large outbound messages (tungstenite write-buffer bound) -------------
+// ---- Large outbound messages (tungstenite write-buffer bound) -------------
 
 #[tokio::test]
 async fn large_outbound_messages_are_sent_and_explicit_buffer_bounds_fail_cleanly() {

@@ -5,7 +5,7 @@
 //! * [`resolve()`] merges app, group and route declarations into an [`EffectivePolicy`]
 //!   at startup using the same rules.
 //! * [`enforce`] holds the runtime checks (authentication, authorisation, CSRF, CORS,
-//!   rate limiting) that run on **every** request; they are never skipped because a
+//!   rate limiting) that run on **every** request. They are never skipped because a
 //!   declaration was statically valid.
 
 pub mod auth;
@@ -30,7 +30,7 @@ pub(crate) use owned::{Level, LevelAuth, LevelCsrf, LevelKind};
 /// Authentication requirement at one declaration level.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AuthSpec {
-    /// Not declared at this level; inherit from the parent.
+    /// Not declared at this level. Inherit from the parent.
     Inherit,
     /// An authenticated principal is required.
     Required,
@@ -45,7 +45,7 @@ pub enum AuthSpec {
 /// CSRF declaration at one level.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CsrfSpec {
-    /// Not declared; inherit (the default is to enforce).
+    /// Not declared. Inherit (the default is to enforce).
     Inherit,
     /// Enforce double-submit CSRF protection for cookie-authenticated unsafe requests.
     Enforce,
@@ -132,7 +132,7 @@ impl RateLimitSpec {
 
 /// One level (app, group/plugin, or route) of policy declaration.
 ///
-/// Normally produced by the `policy(..)` DSL in macros; all fields are `const`-friendly.
+/// Normally produced by the `policy(..)` DSL in macros. All fields are `const`-friendly.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PolicySpec {
     /// Authentication requirement.
@@ -160,10 +160,10 @@ pub struct PolicySpec {
 /// WebSocket handshake origins declared at one level (`policy(ws_origins = ..)`).
 ///
 /// Same-origin handshakes, handshakes without `Origin` and origins listed explicitly in the
-/// app's CORS configuration are always accepted; see [`WsOrigins`].
+/// app's CORS configuration are always accepted. See [`WsOrigins`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WsOriginsSpec {
-    /// Not declared; inherit (ultimately the app's `.ws_origins(..)` configuration).
+    /// Not declared. Inherit (ultimately the app's `.ws_origins(..)` configuration).
     Inherit,
     /// `ws_origins = any`: no origin check. Rejected with a cookie-capable authenticator.
     Any,

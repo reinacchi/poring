@@ -1,4 +1,4 @@
-//! RFC 8441 WebSockets over HTTP/2 (Phase 4).
+//! RFC 8441 WebSockets over HTTP/2.
 //!
 //! The client is hyper's HTTP/2 client over cleartext TCP (h2c with prior knowledge): it
 //! sends a real Extended CONNECT request (`:method CONNECT`, `:protocol websocket`,
@@ -49,14 +49,14 @@ async fn h2(addr: SocketAddr) -> SendRequest<Empty<Bytes>> {
         hyper::client::conn::http2::handshake(TokioExecutor::new(), TokioIo::new(tcp))
             .await
             .unwrap();
-    // Ends when the connection closes; owned by the test runtime.
+    // Ends when the connection closes. Owned by the test runtime.
     tokio::spawn(async move {
         let _ = conn.await;
     });
     send
 }
 
-/// A plain GET on the connection; also guarantees the server's SETTINGS were processed.
+/// A plain GET on the connection. Also guarantees the server's SETTINGS were processed.
 async fn get(send: &mut SendRequest<Empty<Bytes>>, addr: SocketAddr, path: &str) -> (u16, String) {
     send.ready().await.unwrap();
     let req = http::Request::get(format!("http://{addr}{path}"))
@@ -206,7 +206,7 @@ async fn http1_websockets_still_work_on_an_http2_enabled_server() {
     server.shutdown().await.unwrap();
 }
 
-// ---- P4.3: routing and shared security policy over HTTP/2 ----------------------------
+// ---- Routing and shared security policy over HTTP/2 ----------------------------
 
 use poring::policy::WsOrigins;
 use poring_tests::secure::TableAuth;
@@ -456,7 +456,7 @@ async fn h2_websocket_sessions_count_against_the_session_limit() {
     server.shutdown().await.unwrap();
 }
 
-// ---- P4.4: stream I/O, multiplexing, cancellation, flow control, shutdown ---------------
+// ---- Stream I/O, multiplexing, cancellation, flow control, shutdown ---------------
 
 use tokio_tungstenite::tungstenite::protocol::CloseFrame;
 use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
@@ -747,7 +747,7 @@ async fn shutdown_closes_open_http2_websockets_with_going_away() {
     assert_eq!(live.live(), 0);
 }
 
-/// `/stall-hb`: heartbeat only; `/stall`: no timers at all. Both flood a client that never
+/// `/stall-hb`: heartbeat only. `/stall`: no timers at all. Both flood a client that never
 /// reads, so the server's writes block on HTTP/2 stream flow control.
 async fn stall_server(live: Live) -> poring::Server {
     let (l1, l2, l3) = (live.clone(), live.clone(), live);
@@ -863,10 +863,10 @@ async fn a_blocked_http2_websocket_write_ends_its_session_promptly_at_shutdown()
     );
 }
 
-// ---- P4.5: independent client interoperability (Node.js http2 / nghttp2) -------------
+// ---- Independent client interoperability (Node.js http2 / nghttp2) -------------
 
 /// Runs `tests/interop/h2_ws_client.mjs` against a Poring server. Requires Node.js >= 18
-/// on `PATH`; ignored by default so a missing Node never turns into a silent pass. Run with
+/// on `PATH`. Ignored by default so a missing Node never turns into a silent pass. Run with
 /// `cargo test -p poring-tests --no-default-features --features websocket,http2 --test ws_h2 -- --ignored`.
 #[tokio::test]
 #[ignore = "requires Node.js on PATH; run with --ignored"]
@@ -894,7 +894,7 @@ async fn independent_nodejs_http2_client_interoperates() {
 }
 
 /// Stress: 64 WebSockets multiplexed on one HTTP/2 connection, each driven concurrently
-/// from its own task alongside ordinary requests; half are cancelled mid-traffic (stream
+/// from its own task alongside ordinary requests. Half are cancelled mid-traffic (stream
 /// dropped without a close), half close cleanly. Every session must end, every permit must
 /// be released, nothing may panic, and the connection must keep serving afterwards.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

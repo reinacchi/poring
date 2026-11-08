@@ -107,7 +107,7 @@ required-features = ["json", "trace-flow"]
 name = "tracing_parity"
 
 [[test]]
-# The trybuild cases use `Json` and the flow-graph macros; the `.stderr` snapshots record
+# The trybuild cases use `Json` and the flow-graph macros. The `.stderr` snapshots record
 # the diagnostics of that feature set (on the pinned toolchain, see ci.yml).
 name = "ui"
 required-features = ["json", "trace-flow"]
@@ -144,7 +144,7 @@ name = "ws_reliability"
 required-features = ["websocket"]
 
 [[test]]
-# P1/P2 hardening: inbound stall deadline, origin scheme, typed recv errors, metrics.
+# Hardening: inbound stall deadline, origin scheme, typed recv errors, metrics.
 name = "ws_hardening"
 required-features = ["websocket"]
 
@@ -154,7 +154,7 @@ name = "ws_fuzz"
 required-features = ["json", "websocket"]
 
 [[test]]
-# HTTP/1.1 always; the HTTP/2, TLS and WebSocket cases run when those features are on.
+# HTTP/1.1 always. The HTTP/2, TLS and WebSocket cases run when those features are on.
 name = "shutdown"
 
 [[test]]

@@ -1,12 +1,12 @@
 //! Production-hardening regressions for WebSocket sessions over real TCP:
 //!
-//! * P1 inbound stall: a managed handler that stops taking messages can no longer hold its
+//! * inbound stall: a managed handler that stops taking messages can no longer hold its
 //!   session, connection and per-client slots indefinitely (`stall_timeout`, `1013`).
-//! * P1 origin scheme: `http://` origins are refused for endpoints known to be HTTPS (a
+//! * origin scheme: `http://` origins are refused for endpoints known to be HTTPS (a
 //!   trusted proxy's `X-Forwarded-Proto`) and everywhere with `WsOrigins::https_only`.
 //!   The native-TLS case lives in `tls.rs`.
-//! * P2 typed `recv`: a terminal transport error is reported exactly once, then `None`.
-//! * P2 metrics: message counts are published while sessions run; queue pressure and close
+//! * typed `recv`: a terminal transport error is reported exactly once, then `None`.
+//! * metrics: message counts are published while sessions run. Queue pressure and close
 //!   reasons are counted.
 //!
 //! Every wait is bounded.
@@ -99,7 +99,7 @@ async fn close_code(
 }
 
 // ---------------------------------------------------------------------------------------
-// P1: inbound stall deadline
+// inbound stall deadline
 
 #[derive(Clone, Default)]
 struct Probe {
@@ -262,7 +262,7 @@ async fn a_send_only_handler_never_stalls() {
     let server = stall_server(Probe::default(), poring::Limits::default()).await;
     let mut ws = client(server.local_addr(), "/sender").await;
     let mut got = 0;
-    // The client keeps sending while it reads; the dropped receiver discards them.
+    // The client keeps sending while it reads. The dropped receiver discards them.
     let deadline = Instant::now() + BOUND;
     while got < 20 && Instant::now() < deadline {
         ws.send(Message::text("ignored")).await.unwrap();
@@ -294,7 +294,7 @@ async fn a_slow_but_reading_handler_is_not_closed() {
 }
 
 // ---------------------------------------------------------------------------------------
-// P1: origin scheme (plain listener; native TLS is covered in tls.rs)
+// origin scheme (plain listener, native TLS is covered in tls.rs)
 
 async fn origin_server(origins: WsOrigins) -> poring::Server {
     Poring::new()
@@ -389,7 +389,7 @@ fn https_only_configuration_errors_are_reported_by_build() {
 }
 
 // ---------------------------------------------------------------------------------------
-// P2: typed recv reports a terminal transport error once
+// typed recv reports a terminal transport error once
 
 #[derive(Debug, Deserialize, Serialize, PoringSchema)]
 struct Ping {
@@ -483,7 +483,7 @@ async fn typed_recv_reports_an_abrupt_disconnect_once_then_ends() {
 }
 
 // ---------------------------------------------------------------------------------------
-// P2: timely metrics, queue pressure and close reasons
+// timely metrics, queue pressure and close reasons
 
 async fn echo_server() -> poring::Server {
     Poring::new()
@@ -544,7 +544,7 @@ async fn message_counts_are_published_while_the_session_runs() {
     tokio::time::sleep(Duration::from_millis(1100)).await;
     ws.send(Message::text("late")).await.unwrap();
     ws.next().await.unwrap().unwrap();
-    // The late inbound message was published with everything before it; its echo is
+    // The late inbound message was published with everything before it. Its echo is
     // published at the next batch, interval or session end.
     eventually("late message published", || {
         let s = server.ws_stats();
@@ -585,5 +585,149 @@ async fn outbound_pressure_and_server_closes_are_counted() {
         server.ws_stats().server_closes >= 1
     })
     .await;
+    server.shutdown().await.unwrap();
+}
+
+// ---------------------------------------------------------------------------------------
+// quiet sessions publish their counts on a timer, not only on activity
+
+/// Typed and managed (`no_ping`) handlers that receive messages and then wait: the counts
+/// must reach `ws_stats()` while the session is still open and silent, within about a
+/// second, without any further traffic.
+#[tokio::test]
+async fn quiet_typed_and_managed_sessions_publish_counts_on_a_timer() {
+    let server = Poring::new()
+        .ws("/typed", |ws: WebSocketUpgrade| async move {
+            ws.typed::<Ping, Ping>()
+                .on_upgrade(|mut sock: TypedSocket<Ping, Ping>| async move {
+                    while let Some(Ok(_)) = sock.recv().await {}
+                })
+        })
+        .ws("/managed", |ws: WebSocketUpgrade| async move {
+            ws.managed()
+                .no_ping()
+                .on_upgrade(|mut sock: ManagedSocket| async move {
+                    while sock.recv().await.is_some() {}
+                })
+        })
+        .build()
+        .unwrap()
+        .bind("127.0.0.1:0")
+        .await
+        .unwrap();
+    let addr = server.local_addr();
+    let mut typed = client(addr, "/typed").await;
+    let mut managed = client(addr, "/managed").await;
+    for n in 0..3 {
+        typed
+            .send(Message::text(format!(r#"{{"n":{n}}}"#)))
+            .await
+            .unwrap();
+        managed.send(Message::text("x")).await.unwrap();
+    }
+    // Far fewer than a batch: only the timer can publish these while both stay silent.
+    let sent_at = Instant::now();
+    eventually("quiet sessions published", || {
+        let s = server.ws_stats();
+        s.messages_received == 6 && s.bytes_received == 3 * 7 + 3
+    })
+    .await;
+    let lag = sent_at.elapsed();
+    assert!(lag < Duration::from_millis(2500), "published after {lag:?}");
+    let s = server.ws_stats();
+    assert_eq!(s.active_sessions, 2, "{s:?}");
+    assert_eq!(s.sessions_ended, 0, "{s:?}");
+    typed.close(None).await.unwrap();
+    managed.close(None).await.unwrap();
+    eventually("sessions ended", || server.ws_stats().active_sessions == 0).await;
+    server.shutdown().await.unwrap();
+}
+
+// ---------------------------------------------------------------------------------------
+// endpoint-level production profile and configuration checks
+
+/// `production()` presets apply bounded settings that are enforced end to end, and the
+/// warning checks flag every unbounded setting of the defaults.
+#[tokio::test]
+async fn production_presets_are_enforced_and_defaults_are_flagged() {
+    let warnings = Arc::new(std::sync::Mutex::new(Vec::<(String, Vec<String>)>::new()));
+    let (w1, w2) = (warnings.clone(), warnings.clone());
+    let server = Poring::new()
+        .limits(poring::Limits::production())
+        .ws("/prod", move |ws: WebSocketUpgrade| {
+            let w = w1.clone();
+            async move {
+                let up = ws.production().managed().production();
+                w.lock()
+                    .unwrap()
+                    .push(("prod".into(), up.production_warnings()));
+                up.on_upgrade(|mut sock: ManagedSocket| async move {
+                    while let Some(m) = sock.recv().await {
+                        if sock.send(m).await.is_err() {
+                            break;
+                        }
+                    }
+                })
+            }
+        })
+        .ws("/default", move |ws: WebSocketUpgrade| {
+            let w = w2.clone();
+            async move {
+                let up = ws.managed().no_ping().no_idle_timeout().no_stall_timeout();
+                w.lock()
+                    .unwrap()
+                    .push(("default".into(), up.production_warnings()));
+                up.on_upgrade(|_sock: ManagedSocket| async move {})
+            }
+        })
+        .build()
+        .unwrap()
+        .bind("127.0.0.1:0")
+        .await
+        .unwrap();
+    let addr = server.local_addr();
+    // 64 KiB inbound cap: a 70 KiB message fails the session with 1009 (Message Too Big).
+    let mut ws = client(addr, "/prod").await;
+    ws.send(Message::text("ok")).await.unwrap();
+    assert_eq!(ws.next().await.unwrap().unwrap(), Message::text("ok"));
+    ws.send(Message::binary(vec![0u8; 70 * 1024]))
+        .await
+        .unwrap();
+    assert_eq!(close_code(&mut ws).await, Some(CloseCode::Size));
+    // 50 msg/s per session: a burst of 200 is closed with 1008 (Policy).
+    let mut ws = client(addr, "/prod").await;
+    for _ in 0..200 {
+        if ws.send(Message::text("x")).await.is_err() {
+            break;
+        }
+    }
+    assert_eq!(close_code(&mut ws).await, Some(CloseCode::Policy));
+    eventually("rate limit counted", || server.ws_stats().rate_limited >= 1).await;
+    let mut d = client(addr, "/default").await;
+    let _ = close_code(&mut d).await;
+    let got = warnings.lock().unwrap().clone();
+    let prod: Vec<_> = got.iter().filter(|(k, _)| k == "prod").collect();
+    let default: Vec<_> = got.iter().filter(|(k, _)| k == "default").collect();
+    assert!(prod.iter().all(|(_, w)| w.is_empty()), "{prod:?}");
+    let dw = &default[0].1;
+    for needle in [
+        "message_rate",
+        "max_lifetime",
+        "dead peers",
+        "stall_timeout",
+        "max_queued_bytes",
+        "max_outbound_message",
+    ] {
+        assert!(
+            dw.iter().any(|w| w.contains(needle)),
+            "missing {needle}: {dw:?}"
+        );
+    }
+    assert!(
+        poring::Limits::production()
+            .production_warnings()
+            .is_empty()
+    );
+    assert_eq!(poring::Limits::default().production_warnings().len(), 2);
     server.shutdown().await.unwrap();
 }

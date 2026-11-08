@@ -23,7 +23,7 @@
 //! * The upgrade request itself goes through the normal policy pipeline (auth, rate
 //!   limits) before `on_upgrade` runs. Handshakes carrying an `Origin` header must be
 //!   same-origin or listed explicitly in the app's CORS origins or
-//!   [`WsOrigins`](crate::policy::WsOrigins) (the `*` wildcard does not count); otherwise
+//!   [`WsOrigins`](crate::policy::WsOrigins) (the `*` wildcard does not count). Otherwise
 //!   they are rejected with 403 before any `101`. Same-origin includes the scheme whenever
 //!   the endpoint's scheme is known (native TLS, HTTP/2 `:scheme`, or a trusted proxy's
 //!   `Forwarded`/`X-Forwarded-Proto`): an `http://` page cannot reach a `wss://` endpoint
@@ -38,7 +38,7 @@
 //!   `Sec-WebSocket-Version: 13` (otherwise `426` advertising 13, or `400` if missing or
 //!   repeated) and exactly one `Sec-WebSocket-Key` that is base64 of 16 bytes (`400`).
 //! * Subprotocols are opt-in: [`WebSocketUpgrade::protocols`] selects, in server
-//!   preference order, only a protocol the client offered; malformed offers are rejected
+//!   preference order, only a protocol the client offered. Malformed offers are rejected
 //!   with `400`. Extensions such as `permessage-deflate` are never negotiated.
 
 use std::future::Future;
@@ -63,8 +63,8 @@ use crate::schema::PoringSchema;
 ///
 /// Sessions are admitted against `Limits::max_ws_sessions` before `101`, run as tasks
 /// owned here (never detached: see [`crate::app::tasks::TaskTracker`]), and hold their
-/// session permit and their TCP connection permit until they end — normally, by error, by
-/// panic or by cancellation. A finished session is removed from the set as it ends, so
+/// session permit and their TCP connection permit until they end, whether normally, by
+/// error, by panic or by cancellation. A finished session is removed from the set as it ends, so
 /// completed tasks are never retained, even when no further handshake arrives. On shutdown
 /// the supervisor stops admitting, and lingering sessions are aborted after the grace
 /// period.
@@ -85,7 +85,7 @@ enum SessionKey {
     Subject(String),
 }
 
-/// One session counted against a per-client cap; released on drop.
+/// One session counted against a per-client cap. Released on drop.
 struct KeyHold {
     supervisor: std::sync::Arc<Supervisor>,
     key: SessionKey,
@@ -190,7 +190,7 @@ pub(crate) struct Admission {
 
 /// A message quota shared by every WebSocket session that uses it, keyed by client IP or
 /// by principal (see [`WebSocketUpgrade::message_quota`]). Create it once (for example in
-/// application state) and pass it to each upgrade; clones share the same buckets.
+/// application state) and pass it to each upgrade. Clones share the same buckets.
 ///
 /// Buckets live in a bounded, sharded [`RateLimiter`](crate::policy::rate_limit::RateLimiter)
 /// (GCRA): `messages` per `per` with a burst of `messages`. When the key store is full,
@@ -310,10 +310,13 @@ const RATE_EXCEEDED: &str = "message rate exceeded";
 ///
 /// Message and byte counts cover [managed](WebSocketUpgrade::managed) and
 /// [typed](WebSocketUpgrade::typed) sessions only (raw sockets are not observed). Each
-/// session accumulates them locally and publishes them at least every 64 messages, when a
-/// message arrives or leaves more than a second after the last publication, on every
-/// managed heartbeat tick, and when the session ends, so long-lived sessions are visible
-/// while they run. Payloads, headers and credentials are never recorded.
+/// session accumulates them locally and publishes them every 64 messages, about one second
+/// after an unpublished count was taken while the session waits for input (managed
+/// sessions always, typed sessions while the handler is awaiting `recv`), at the next
+/// `recv`/`send` otherwise, and when the session ends. Counts are therefore eventually
+/// consistent: a scrape can lag a session by roughly a second, or longer only while a typed
+/// handler is busy outside `recv`/`send`. Event counters (refusals, timeouts, closes) are
+/// published immediately. Payloads, headers and credentials are never recorded.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct WsStats {
@@ -481,13 +484,15 @@ impl Drop for ActiveSession {
 
 /// Messages a session counts locally before publishing them to the app counters.
 const METER_BATCH: u64 = 64;
-/// Longest time a busy session keeps counts unpublished.
+/// Longest time a session keeps counts unpublished while it is waiting for input (typed and
+/// managed sessions arm a timer for it) or processing messages.
 const METER_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// Per-session message/byte counts. Accumulated locally (no shared-cache-line traffic per
 /// message) and published to the app counters in batches: every [`METER_BATCH`] messages,
-/// when [`METER_INTERVAL`] has passed at the next message, on [`flush`](Self::flush) and
-/// when dropped.
+/// when [`METER_INTERVAL`] has passed at the next message, at
+/// [`flush_deadline`](Self::flush_deadline) while the session waits for input, on
+/// [`flush`](Self::flush) and when dropped.
 #[derive(Debug)]
 struct SessionMeter {
     counters: Option<std::sync::Arc<WsCounters>>,
@@ -539,6 +544,16 @@ impl SessionMeter {
         }
     }
 
+    /// When unpublished counts must be published: `None` if there is nothing to publish (or
+    /// no counters), so an idle session arms no timer and costs nothing.
+    fn flush_deadline(&self) -> Option<tokio::time::Instant> {
+        self.counters.as_ref()?;
+        if self.messages_received + self.messages_sent == 0 {
+            return None;
+        }
+        Some(tokio::time::Instant::from_std(self.last_flush) + METER_INTERVAL)
+    }
+
     /// Publishes the counts accumulated so far.
     fn flush(&mut self) {
         use std::sync::atomic::Ordering::Relaxed;
@@ -573,10 +588,10 @@ impl Drop for SessionMeter {
 /// Notification that the server serving a WebSocket session has begun shutting down.
 ///
 /// Obtained with [`WebSocketUpgrade::shutdown_signal`] before `on_upgrade`, and moved into
-/// the session. After it fires, sessions have until `Limits::shutdown_grace` to finish;
-/// sessions still running then are cancelled (their socket is dropped without a close
+/// the session. After it fires, sessions have until `Limits::shutdown_grace` to finish.
+/// Sessions still running then are cancelled (their socket is dropped without a close
 /// frame). Raw-socket handlers should send a close frame themselves, typically
-/// `CloseCode::Away` (1001); [`TypedSocket::recv`] does so automatically.
+/// `CloseCode::Away` (1001). [`TypedSocket::recv`] does so automatically.
 ///
 /// ```no_run
 /// # use poring::ws::WebSocketUpgrade;
@@ -611,7 +626,7 @@ impl WsShutdown {
 
     /// Completes once shutdown has begun (immediately if it already has). Never completes
     /// for an upgrade that is not served by a Poring server (e.g. the in-process client).
-    /// Cancel-safe; no periodic wake-ups.
+    /// Cancel-safe. No periodic wake-ups.
     pub async fn wait(&mut self) {
         match &mut self.rx {
             // An error means the supervisor is gone, which only happens after shutdown.
@@ -634,7 +649,7 @@ pub type RawSocket = WebSocketStream<hyper_util::rt::TokioIo<hyper::upgrade::Upg
 
 /// Extractor for a WebSocket upgrade request (validates the RFC 6455 handshake headers).
 pub struct WebSocketUpgrade {
-    /// `Sec-WebSocket-Key` for HTTP/1.1; `None` for HTTP/2 (RFC 8441 has no key exchange).
+    /// `Sec-WebSocket-Key` for HTTP/1.1. `None` for HTTP/2 (RFC 8441 has no key exchange).
     key: Option<HeaderValue>,
     on_upgrade: Option<hyper::upgrade::OnUpgrade>,
     admission: Option<Admission>,
@@ -693,7 +708,7 @@ fn valid_key(key: &[u8]) -> bool {
 }
 
 /// RFC 6455 §4.2.1 item 6 and §4.4: exactly one `Sec-WebSocket-Version`, equal to 13.
-/// Unsupported versions get `426 Upgrade Required`; missing or repeated headers are
+/// Unsupported versions get `426 Upgrade Required`. Missing or repeated headers are
 /// malformed (400). Both advertise `Sec-WebSocket-Version: 13`.
 fn check_version(h: &http::HeaderMap) -> Result<(), ApiError> {
     let supported = || HeaderValue::from_static("13");
@@ -751,7 +766,7 @@ impl<S: Sync> FromRequest<S> for WebSocketUpgrade {
 
     async fn from_request(cx: &mut Ctx<'_, S>) -> Result<Self, ApiError> {
         let h = &cx.parts.headers;
-        // HTTP/2 (RFC 8441 §4–5): Extended CONNECT with `:protocol = websocket`; no
+        // HTTP/2 (RFC 8441 §4–5): Extended CONNECT with `:protocol = websocket`. No
         // Connection/Upgrade headers and no key exchange.
         let h2 = crate::policy::ws_origin::websocket_handshake(
             &cx.parts.method,
@@ -859,15 +874,15 @@ impl WebSocketUpgrade {
     }
 
     /// Maximum size of a single inbound frame in bytes (default: the message limit, 64 KiB).
-    /// Values above the message limit have no effect; 0 is treated as 1.
+    /// Values above the message limit have no effect. 0 is treated as 1.
     pub fn max_frame_size(mut self, n: usize) -> Self {
         self.config.max_frame_size = Some(n.max(1));
         self
     }
 
     /// Limits inbound data messages to `messages` per `per` for this session (burst
-    /// `messages`). Applies to [managed](Self::managed) and [typed](Self::typed) sessions;
-    /// a session over the limit is closed with `1008 Policy Violation` (typed `recv`
+    /// `messages`). Applies to [managed](Self::managed) and [typed](Self::typed) sessions.
+    /// A session over the limit is closed with `1008 Policy Violation` (typed `recv`
     /// returns [`WsError::RateLimited`] once). Raw sockets are not metered. Ping/pong and
     /// close frames are not counted. A `messages` of 0 is treated as 1, a zero `per` as 1 ns.
     pub fn message_rate(mut self, messages: u32, per: std::time::Duration) -> Self {
@@ -876,7 +891,7 @@ impl WebSocketUpgrade {
     }
 
     /// Also meters inbound data messages against a quota shared across sessions (per
-    /// client IP or per principal; see [`WsMessageQuota`]). Same enforcement as
+    /// client IP or per principal, see [`WsMessageQuota`]). Same enforcement as
     /// [`message_rate`](Self::message_rate).
     pub fn message_quota(mut self, quota: &WsMessageQuota) -> Self {
         self.message_quota = Some(quota.clone());
@@ -970,11 +985,77 @@ impl WebSocketUpgrade {
     }
 
     /// Maximum duration of the session. When it elapses, a raw or typed session is
-    /// cancelled (its socket is dropped without a close frame); a [managed](Self::managed)
+    /// cancelled (its socket is dropped without a close frame). A [managed](Self::managed)
     /// session is closed with `1001 Going Away` first.
     pub fn max_lifetime(mut self, d: std::time::Duration) -> Self {
         self.max_lifetime = Some(d);
         self
+    }
+
+    /// Production starting point for a public endpoint's inbound limits. Applies:
+    ///
+    /// | setting | value |
+    /// |---|---|
+    /// | [`max_message_size`](Self::max_message_size) / [`max_frame_size`](Self::max_frame_size) | 64 KiB |
+    /// | [`message_rate`](Self::message_rate) | 50 messages per second per session |
+    /// | [`max_lifetime`](Self::max_lifetime) | 24 h |
+    ///
+    /// Call it first and override afterwards. Settings the preset does not touch
+    /// (subprotocols, [`message_quota`](Self::message_quota)) keep their values. It does not
+    /// configure origins, trusted proxies, authentication or per-client session caps: those
+    /// are app-level ([`WsOrigins`](crate::policy::WsOrigins),
+    /// [`Limits::production`](crate::app::Limits::production)). Combine with
+    /// [`ManagedUpgrade::production`] for heartbeats, deadlines and the outbound memory
+    /// budget. The values are defensible defaults, not a guarantee for every workload.
+    ///
+    /// ```
+    /// use poring::prelude::*;
+    /// use poring::ws::{ManagedSocket, WebSocketUpgrade};
+    ///
+    /// let app = Poring::new()
+    ///     .ws("/live", |ws: WebSocketUpgrade| async move {
+    ///         ws.production()
+    ///             .max_message_size(16 * 1024)
+    ///             .managed()
+    ///             .production()
+    ///             .on_upgrade(|mut sock: ManagedSocket| async move {
+    ///                 while let Some(m) = sock.recv().await {
+    ///                     if sock.send(m).await.is_err() {
+    ///                         break;
+    ///                     }
+    ///                 }
+    ///             })
+    ///     })
+    ///     .build()
+    ///     .unwrap();
+    /// # drop(app);
+    /// ```
+    pub fn production(self) -> Self {
+        self.max_message_size(64 * 1024)
+            .message_rate(50, std::time::Duration::from_secs(1))
+            .max_lifetime(std::time::Duration::from_secs(24 * 60 * 60))
+    }
+
+    /// Settings of this upgrade that are unbounded or unusually permissive for a public
+    /// endpoint, as human-readable warnings (empty when none). Use it in a startup log or a
+    /// test. It never changes behaviour. Raw and typed sessions additionally have no
+    /// heartbeat, idle, write or stall deadlines: prefer [`managed`](Self::managed) and
+    /// [`ManagedUpgrade::production_warnings`] for long-lived public sessions.
+    pub fn production_warnings(&self) -> Vec<String> {
+        let mut w = Vec::new();
+        let msg = self.config.max_message_size.unwrap_or(usize::MAX);
+        if msg > 1 << 20 {
+            w.push(format!(
+                "max_message_size is {msg} bytes (more than 1 MiB per message)"
+            ));
+        }
+        if self.message_rate.is_none() && self.message_quota.is_none() {
+            w.push("no message_rate or message_quota: inbound message rate is unlimited".into());
+        }
+        if self.max_lifetime.is_none() {
+            w.push("no max_lifetime: sessions may live forever".into());
+        }
+        w
     }
 
     /// Switches to a managed session, whose socket is driven by Poring: pings, idle
@@ -1006,7 +1087,7 @@ impl WebSocketUpgrade {
     /// Completes the handshake and runs `f` with the raw socket in a session task owned by
     /// the server.
     ///
-    /// The session is admitted against `Limits::max_ws_sessions` first; when the limit is
+    /// The session is admitted against `Limits::max_ws_sessions` first. When the limit is
     /// reached (or the server is shutting down) the response is `503` and `f` never runs.
     /// The session keeps its TCP connection slot until `f` returns, panics or is cancelled
     /// at shutdown (after `Limits::shutdown_grace`).
@@ -1165,14 +1246,14 @@ impl ManagedUpgrade {
     }
 
     /// How long the peer has to answer a heartbeat ping with the matching pong (default
-    /// 20 s). Each ping carries a fresh 8-byte challenge; only a pong echoing it counts:
+    /// 20 s). Each ping carries a fresh 8-byte challenge. Only a pong echoing it counts:
     /// data messages, pings and unsolicited or stale pongs do not. At most one challenge is
     /// outstanding, so a tick that finds one still unanswered sends no new ping. When the
-    /// deadline passes the session is closed with `1001` (waiting for the unresponsive
-    /// peer's close reply at most `min(pong_timeout, close_timeout)`; if an outbound write
-    /// is blocked, the close frame could not be delivered and the connection is dropped at
-    /// once) and counted in
-    /// [`WsStats::heartbeat_timeouts`]. While the handler is not taking inbound messages
+    /// deadline passes the session is closed with `1001` and counted in
+    /// [`WsStats::heartbeat_timeouts`]. The close waits at most
+    /// `min(pong_timeout, close_timeout)` for the unresponsive peer's reply. If an outbound
+    /// write is blocked, the close frame cannot be delivered and the connection is dropped
+    /// at once. While the handler is not taking inbound messages
     /// (and the pump therefore does not read the socket) the deadline is paused, so a slow
     /// handler never causes a heartbeat failure.
     pub fn pong_timeout(mut self, d: std::time::Duration) -> Self {
@@ -1188,7 +1269,7 @@ impl ManagedUpgrade {
     }
 
     /// Capacity, in messages, of each direction's queue between the handler and the I/O
-    /// pump (default 16; `0` is treated as `1`, since a queue must hold one message).
+    /// pump (default 16). `0` is treated as `1`, since a queue must hold one message.
     pub fn queue_messages(mut self, n: usize) -> Self {
         self.queue_messages = n.max(1);
         self
@@ -1207,17 +1288,17 @@ impl ManagedUpgrade {
     /// payload sizes of messages accepted by `send` but not yet written to the socket.
     /// `send` waits (first come, first served across all senders of the session) while the
     /// budget is exhausted, and fails once the session has closed. Bytes are returned when
-    /// a message is written or dropped because the session ended; a `send` cancelled while
+    /// a message is written or dropped because the session ended. A `send` cancelled while
     /// waiting reserves nothing. Together with [`queue_messages`](Self::queue_messages)
     /// this bounds a session's queued outbound memory. Application `Ping`/`Pong` payloads
-    /// count against the budget; close frames and the pump's own heartbeat pings (at most
+    /// count against the budget. Close frames and the pump's own heartbeat pings (at most
     /// 125 bytes each) do not.
     pub fn max_queued_bytes(mut self, n: usize) -> Self {
         self.max_queued_bytes = n.min(MAX_BUDGET);
         self
     }
 
-    /// Closes the session (`1001`) when nothing at all — data, ping, pong or close — has
+    /// Closes the session (`1001`) when nothing at all (data, ping, pong or close) has
     /// been received from the peer for this long (default 75 s). Time spent waiting for
     /// the handler to take an inbound message does not count. The socket keeps being read
     /// while an outbound write is blocked, so a peer that stops reading is still subject to
@@ -1236,7 +1317,7 @@ impl ManagedUpgrade {
     /// Longest time one outbound message may take to be written to the socket, from when
     /// the pump hands it to the transport until it is flushed (default 60 s). A peer that
     /// stops reading eventually blocks writes (once the TCP or HTTP/2 flow-control windows
-    /// are full); when this deadline passes the session ends without a close handshake (a
+    /// are full). When this deadline passes the session ends without a close handshake (a
     /// close frame could not be delivered either), counted in
     /// [`WsStats::write_timeouts`]. Independently of this setting, a blocked write never
     /// delays heartbeat, idle, lifetime or shutdown handling: the pump keeps reading and
@@ -1292,6 +1373,69 @@ impl ManagedUpgrade {
         self
     }
 
+    /// Production starting point for a managed session's deadlines and memory budget:
+    ///
+    /// | setting | default | `production()` |
+    /// |---|---|---|
+    /// | [`ping_interval`](Self::ping_interval) / [`pong_timeout`](Self::pong_timeout) | 30 s / 20 s | 30 s / 20 s |
+    /// | [`idle_timeout`](Self::idle_timeout) | 75 s | 90 s |
+    /// | [`write_timeout`](Self::write_timeout) | 60 s | 30 s |
+    /// | [`stall_timeout`](Self::stall_timeout) | 60 s | 30 s |
+    /// | [`close_timeout`](Self::close_timeout) | 5 s | 5 s |
+    /// | [`queue_messages`](Self::queue_messages) | 16 | 32 |
+    /// | [`max_outbound_message`](Self::max_outbound_message) | 64 MiB | 256 KiB |
+    /// | [`max_queued_bytes`](Self::max_queued_bytes) | 64 MiB | 1 MiB |
+    ///
+    /// With the inbound limits of [`WebSocketUpgrade::production`] (64 KiB messages), the
+    /// worst case is about 3.4 MiB per session (inbound 64 KiB × 33, outbound 1 MiB plus one
+    /// 256 KiB message in flight). Call it before your own overrides. Inbound limits,
+    /// origins, authentication and per-client caps are configured elsewhere (see
+    /// [`WebSocketUpgrade::production`]).
+    pub fn production(self) -> Self {
+        use std::time::Duration;
+        self.ping_interval(Duration::from_secs(30))
+            .pong_timeout(Duration::from_secs(20))
+            .idle_timeout(Duration::from_secs(90))
+            .write_timeout(Duration::from_secs(30))
+            .stall_timeout(Duration::from_secs(30))
+            .close_timeout(DEFAULT_CLOSE_TIMEOUT)
+            .queue_messages(32)
+            .max_outbound_message(256 * 1024)
+            .max_queued_bytes(1 << 20)
+    }
+
+    /// Like [`WebSocketUpgrade::production_warnings`], plus the managed deadlines and the
+    /// outbound memory budget: disabled heartbeats together with no idle timeout, disabled
+    /// write or stall deadlines, and outbound budgets above 8 MiB.
+    pub fn production_warnings(&self) -> Vec<String> {
+        let mut w = self.inner.production_warnings();
+        if self.ping_interval.is_none() && self.idle_timeout.is_none() {
+            w.push("no ping and no idle_timeout: dead peers are never detected".into());
+        }
+        if self.ping_interval.is_some() && self.pong_timeout.is_none() {
+            w.push("no pong_timeout: unanswered heartbeats never end the session".into());
+        }
+        if self.write_timeout.is_none() {
+            w.push("no write_timeout: a peer that stops reading holds its session".into());
+        }
+        if self.stall_timeout.is_none() {
+            w.push("no stall_timeout: a handler that stops reading holds its session".into());
+        }
+        if self.max_queued_bytes > 8 << 20 {
+            w.push(format!(
+                "max_queued_bytes is {} bytes (outbound budget above 8 MiB per session)",
+                self.max_queued_bytes
+            ));
+        }
+        if self.max_outbound_message > 8 << 20 {
+            w.push(format!(
+                "max_outbound_message is {} bytes (above 8 MiB)",
+                self.max_outbound_message
+            ));
+        }
+        w
+    }
+
     /// The selected subprotocol, if any.
     pub fn protocol(&self) -> Option<&str> {
         self.inner.protocol()
@@ -1321,7 +1465,7 @@ impl ManagedUpgrade {
     ///   session ends once the close handshake finished (bounded by `close_timeout`).
     /// * The transport ends first (peer close or disconnect, protocol error, idle or
     ///   heartbeat timeout, lifetime, shutdown): `recv` returns `None` and `send` fails, and
-    ///   the handler gets `close_timeout` to return; after that it is cancelled (dropped at
+    ///   the handler gets `close_timeout` to return. After that it is cancelled (dropped at
     ///   its next await point). Its permits, queues and buffers are released either way.
     /// * The handler panics: the panic is caught, counted in
     ///   [`WsStats::sessions_panicked`], and the peer gets `1011`.
@@ -1456,7 +1600,7 @@ impl OutboundTx {
                         },
                     )));
                 }
-                // First come, first served across senders; fails once the pump has closed
+                // First come, first served across senders. Fails once the pump has closed
                 // the budget. A wait cancelled here reserves nothing.
                 let n = u32::try_from(len).map_err(|_| closed_error())?;
                 let reserved = match self.budget.bytes.clone().try_acquire_many_owned(n) {
@@ -1504,16 +1648,16 @@ impl OutboundTx {
 /// Guarantees, independent of how often the handler calls [`recv`](Self::recv):
 ///
 /// * pings are sent every `ping_interval`, and a ping whose matching pong does not arrive
-///   within `pong_timeout` closes the session with `1001`;
-/// * a peer that sends nothing for `idle_timeout` is closed with `1001`;
-/// * one outbound message that cannot be written within `write_timeout` ends the session;
-///   reading, heartbeats, timeouts and shutdown keep working while a write is blocked
+///   within `pong_timeout` closes the session with `1001`.
+/// * a peer that sends nothing for `idle_timeout` is closed with `1001`.
+/// * one outbound message that cannot be written within `write_timeout` ends the session.
+///   Reading, heartbeats, timeouts and shutdown keep working while a write is blocked
 ///   (idle and heartbeat timeouts then drop the connection without a close frame, which
-///   could not reach a peer that is not reading);
-/// * `max_lifetime` and server shutdown close the session with `1001`;
-/// * when the handler returns or drops the socket, the session closes with `1000`;
+///   could not reach a peer that is not reading).
+/// * `max_lifetime` and server shutdown close the session with `1001`.
+/// * when the handler returns or drops the socket, the session closes with `1000`.
 /// * every close waits at most `close_timeout` for the peer's reply.
-/// * a peer close is answered with the peer's code (`1002` for codes that must not be sent);
+/// * a peer close is answered with the peer's code (`1002` for codes that must not be sent).
 /// * invalid UTF-8 fails the session with `1007`, an oversized message with `1009`, and any
 ///   other protocol violation with `1002`, without waiting for a reply.
 ///
@@ -1522,7 +1666,7 @@ impl OutboundTx {
 /// pump from reading data (pings are still sent and the idle and pong timers are paused
 /// meanwhile), and `send` waits while the outbound queue is full or its byte budget
 /// ([`ManagedUpgrade::max_queued_bytes`]) is exhausted.
-/// Use [`WebSocketUpgrade::on_upgrade`] for full control of the raw socket instead; none of
+/// Use [`WebSocketUpgrade::on_upgrade`] for full control of the raw socket instead. None of
 /// these guarantees apply there.
 #[derive(Debug)]
 pub struct ManagedSocket {
@@ -1539,13 +1683,13 @@ enum Outbound {
 }
 
 impl ManagedSocket {
-    /// The next text or binary message; `None` once the session is closing or closed.
+    /// The next text or binary message. `None` once the session is closing or closed.
     pub async fn recv(&mut self) -> Option<Message> {
         self.rx.recv().await
     }
 
     /// Queues a message for sending. Waits while the outbound queue is full or its byte
-    /// budget is exhausted; fails once the session is closed, and fails immediately for a
+    /// budget is exhausted. Fails once the session is closed, and fails immediately for a
     /// message above [`ManagedUpgrade::max_outbound_message`]. Control frames are managed
     /// by Poring: `Ping`/`Pong` are sent as given, `Close` closes the session.
     pub async fn send(&mut self, msg: Message) -> Result<(), WsError> {
@@ -1554,7 +1698,7 @@ impl ManagedSocket {
 
     /// Closes the session with `frame` (or `1000` when `None`). Codes that must not be sent
     /// (1004–1006, 1015, unassigned 1014–2999, below 1000, 5000 and above) are replaced by
-    /// `1011`; reasons longer than 123 bytes are truncated at a character boundary.
+    /// `1011`. Reasons longer than 123 bytes are truncated at a character boundary.
     pub async fn close(self, frame: Option<tungstenite::protocol::CloseFrame>) {
         self.tx.close(frame).await;
     }
@@ -1586,7 +1730,7 @@ pub struct ManagedReceiver {
 }
 
 impl ManagedReceiver {
-    /// The next text or binary message; `None` once the session is closing or closed.
+    /// The next text or binary message. `None` once the session is closing or closed.
     pub async fn recv(&mut self) -> Option<Message> {
         self.rx.recv().await
     }
@@ -1668,7 +1812,7 @@ where
     In: DeserializeOwned + PoringSchema,
     Out: Serialize,
 {
-    /// The next decoded and validated message; `None` once the session is closing or
+    /// The next decoded and validated message. `None` once the session is closing or
     /// closed. Decode and validation failures are returned and the session continues.
     pub async fn recv(&mut self) -> Option<Result<In, WsError>> {
         let msg = self.inner.recv().await?;
@@ -1691,13 +1835,13 @@ where
         })
     }
 
-    /// Serializes and queues a message (same waiting and limits as [`ManagedSocket::send`]).
+    /// Serialises and queues a message (same waiting and limits as [`ManagedSocket::send`]).
     pub async fn send(&mut self, msg: &Out) -> Result<(), WsError> {
         let s = serde_json::to_string(msg)?;
         self.inner.send(Message::text(s)).await
     }
 
-    /// Closes the session with `frame` (or `1000`); see [`ManagedSocket::close`].
+    /// Closes the session with `frame` (or `1000`). See [`ManagedSocket::close`].
     pub async fn close(self, frame: Option<tungstenite::protocol::CloseFrame>) {
         self.inner.close(frame).await;
     }
@@ -1836,7 +1980,7 @@ struct Challenge {
     deadline: tokio::time::Instant,
 }
 
-/// Drives a managed session's socket until it closes. Owns the socket; talks to the
+/// Drives a managed session's socket until it closes. Owns the socket. Talks to the
 /// handler through two bounded queues. Wakes only on I/O, queue activity or its timers.
 async fn pump(mut ws: RawSocket, io: Pump) {
     let budget = io.budget.clone();
@@ -1886,7 +2030,7 @@ fn socket_event(
     })
 }
 
-/// Hands one frame to the socket without waiting for it to be written; the caller then
+/// Hands one frame to the socket without waiting for it to be written. The caller then
 /// drives the flush through [`socket_event`]. A frame that cannot be written at once stays
 /// in tungstenite's bounded write buffer (`max_write_buffer`).
 fn start_write(ws: &mut RawSocket, m: Message) -> Result<(), tungstenite::Error> {
@@ -1918,13 +2062,13 @@ async fn run_pump(ws: &mut RawSocket, io: Pump) {
     });
     let mut challenge: Option<Challenge> = None;
     let mut ping_seq: u64 = 0;
-    // An inbound message waiting for room in the handler's queue; the socket is not read
+    // An inbound message waiting for room in the handler's queue. The socket is not read
     // (and the idle and pong timers are paused) meanwhile.
     let mut pending: Option<Message> = None;
     let mut paused_at = start;
     let mut deliver = true;
     let mut handler_watch = true;
-    // At most one outbound data message is in flight; the next is taken from the queue
+    // At most one outbound data message is in flight. The next is taken from the queue
     // once it is flushed. Reading and every timer keep running meanwhile.
     let mut writing: Option<Writing> = None;
 
@@ -1938,6 +2082,8 @@ async fn run_pump(ws: &mut RawSocket, io: Pump) {
             _ => None,
         };
         let (read, flush) = (pending.is_none(), writing.is_some());
+        // Publishes counts of quiet sessions (also with `no_ping`) within `METER_INTERVAL`.
+        let meter_at = meter.flush_deadline();
         tokio::select! {
             biased;
             _ = stop.wait() => {
@@ -1983,6 +2129,9 @@ async fn run_pump(ws: &mut RawSocket, io: Pump) {
                 tracing::debug!("websocket write did not complete in time");
                 meter.note(WsEvent::WriteTimeout);
                 break;
+            }
+            _ = sleep_until(meter_at.unwrap_or(far)), if meter_at.is_some() => {
+                meter.flush();
             }
             _ = async { ping.as_mut().expect("guarded").tick().await }, if ping.is_some() => {
                 // Quiet sessions publish their counts at least once per heartbeat.
@@ -2064,7 +2213,7 @@ async fn run_pump(ws: &mut RawSocket, io: Pump) {
                                 break;
                             }
                             Message::Text(_) | Message::Binary(_) if deliver => {
-                                // Hand it over at once when the queue has room; otherwise
+                                // Hand it over at once when the queue has room. Otherwise
                                 // stop reading until the handler takes it (backpressure).
                                 match in_tx.try_send(m) {
                                     Ok(()) => {}
@@ -2079,15 +2228,15 @@ async fn run_pump(ws: &mut RawSocket, io: Pump) {
                                     }
                                 }
                             }
-                            // Only the pong echoing the outstanding challenge answers it;
-                            // unsolicited and stale pongs are ignored (RFC 6455 §5.5.3).
+                            // Only the pong echoing the outstanding challenge answers it.
+                            // Unsolicited and stale pongs are ignored (RFC 6455 §5.5.3).
                             Message::Pong(p)
                                 if challenge.as_ref().is_some_and(|c| p.as_ref() == c.payload) =>
                             {
                                 challenge = None;
                             }
                             Message::Close(_) => meter.note(WsEvent::PeerClose),
-                            // Pings are answered by tungstenite on the next read/write; a
+                            // Pings are answered by tungstenite on the next read/write. A
                             // peer close is answered likewise and ends the stream next.
                             _ => {}
                         }
@@ -2220,7 +2369,7 @@ pub enum WsError {
     #[error("message failed validation")]
     Invalid(Vec<ValidationIssue>),
     /// The peer exceeded the session's message rate or quota
-    /// ([`WebSocketUpgrade::message_rate`], [`WebSocketUpgrade::message_quota`]); the
+    /// ([`WebSocketUpgrade::message_rate`], [`WebSocketUpgrade::message_quota`]). The
     /// session was closed with `1008 Policy Violation`.
     #[error("message rate exceeded")]
     RateLimited,
@@ -2248,12 +2397,12 @@ where
     In: DeserializeOwned + PoringSchema,
     Out: Serialize,
 {
-    /// Receives the next data message. Ping/pong are handled internally; `None` means the
+    /// Receives the next data message. Ping/pong are handled internally. `None` means the
     /// connection is closing: the peer closed it (its close frame has been answered), or the
-    /// server began shutting down — in which case a close frame with code 1001 (Going Away)
+    /// server began shutting down, in which case a close frame with code 1001 (Going Away)
     /// has been sent. A transport or protocol error is returned exactly once and ends the
     /// stream: after invalid UTF-8, an oversized message or a protocol violation the session
-    /// is failed with `1007`, `1009` or `1002`; after an I/O error, a reset or an abrupt
+    /// is failed with `1007`, `1009` or `1002`. After an I/O error, a reset or an abrupt
     /// disconnect nothing can be sent. Every later call returns `None`. Decode and
     /// validation errors are not terminal: the session continues.
     pub async fn recv(&mut self) -> Option<Result<In, WsError>> {
@@ -2261,6 +2410,9 @@ where
             if self.done {
                 return None;
             }
+            // Counts received earlier are published within `METER_INTERVAL` even if no
+            // further message arrives (`StreamExt::next` is cancel-safe).
+            let flush_at = self.meter.flush_deadline();
             let next = tokio::select! {
                 biased;
                 _ = self.stop.wait() => {
@@ -2275,6 +2427,12 @@ where
                     return None;
                 }
                 m = self.raw.next() => m,
+                _ = tokio::time::sleep_until(flush_at.unwrap_or_else(tokio::time::Instant::now)),
+                    if flush_at.is_some() =>
+                {
+                    self.meter.flush();
+                    continue;
+                }
             };
             let Some(next) = next else {
                 self.done = true;
@@ -2318,7 +2476,7 @@ where
                 Message::Text(t) => serde_json::from_slice::<In>(t.as_bytes()),
                 Message::Binary(b) => serde_json::from_slice::<In>(b),
                 Message::Close(_) => {
-                    // Tungstenite has queued the close reply; reading again flushes it and
+                    // Tungstenite has queued the close reply. Reading again flushes it and
                     // completes the closing handshake.
                     self.done = true;
                     self.meter.note(WsEvent::PeerClose);

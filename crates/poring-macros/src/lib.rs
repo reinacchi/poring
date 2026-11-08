@@ -1,5 +1,5 @@
 //! Procedural macros for [Poring](https://docs.rs/poring). Use them through the `poring`
-//! crate (`#[poring::get]`, `poring::poring_app!`, ...); generated code refers to the
+//! crate (`#[poring::get]`, `poring::poring_app!`, ...). Generated code refers to the
 //! documented private namespace `::poring::__private`.
 #![forbid(unsafe_code)]
 
@@ -47,7 +47,7 @@ pub fn ws(attr: TokenStream, item: TokenStream) -> TokenStream {
     out(route::expand(route::Kind::Ws, attr.into(), item.into()))
 }
 
-/// Declares a lifecycle hook (before: `async fn(&mut Ctx<'_, S>) -> R`; after:
+/// Declares a lifecycle hook (before: `async fn(&mut Ctx<'_, S>) -> R`, after:
 /// `async fn(&Ctx<'_, S>, &mut Response)`).
 #[proc_macro_attribute]
 pub fn hook(attr: TokenStream, item: TokenStream) -> TokenStream {

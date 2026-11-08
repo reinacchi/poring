@@ -2,7 +2,7 @@
 ///
 /// A guest component exports `handler`. The host calls `info` once during preflight (ABI
 /// version, declared capabilities) and `handle` once per request, in a fresh store.
-/// Hosts provide only the imports for capabilities that were explicitly granted; a guest
+/// Hosts provide only the imports for capabilities that were explicitly granted. A guest
 /// importing anything else fails to instantiate and is rejected.
 package poring:plugin@0.1.0;
 
@@ -32,7 +32,7 @@ interface handler {
         body: list<u8>,
     }
 
-    /// A handled error; mapped to an HTTP error response (status clamped to 400..=599).
+    /// A handled error. Mapped to an HTTP error response (status clamped to 400..=599).
     record guest-error {
         status: u16,
         message: string,
@@ -43,7 +43,7 @@ interface handler {
         version: string,
         /// Must equal the host's supported ABI version (1).
         abi: u32,
-        /// Capabilities the guest needs; each must be granted by the host.
+        /// Capabilities the guest needs. Each must be granted by the host.
         capabilities: list<string>,
     }
 

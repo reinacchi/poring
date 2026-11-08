@@ -66,7 +66,7 @@ fn process_prefix() -> u32 {
     static P: OnceLock<u32> = OnceLock::new();
     *P.get_or_init(|| {
         let mut b = [0u8; 4];
-        // Fall back to a time-derived prefix if the OS RNG is unavailable; uniqueness of
+        // Fall back to a time-derived prefix if the OS RNG is unavailable. Uniqueness of
         // correlation IDs is a debugging aid, not a security property.
         if getrandom::fill(&mut b).is_err() {
             let t = std::time::SystemTime::now()
@@ -80,8 +80,8 @@ fn process_prefix() -> u32 {
 }
 
 impl RequestId {
-    /// Accepts a client-supplied ID only if it is 1..=64 chars of `[A-Za-z0-9._-]`;
-    /// otherwise generates a fresh one. Prevents header/log injection via correlation IDs.
+    /// Accepts a client-supplied ID only if it is 1..=64 chars of `[A-Za-z0-9._-]`.
+    /// Otherwise generates a fresh one. Prevents header/log injection via correlation IDs.
     pub(crate) fn from_headers(h: &HeaderMap) -> RequestId {
         if let Some(v) = h.get("x-request-id") {
             let b = v.as_bytes();
@@ -131,7 +131,7 @@ impl fmt::Display for RequestId {
 /// Per-request context.
 ///
 /// A `Ctx` can only be created by the Poring runtime after routing and security
-/// enforcement; there is no public constructor. This guarantees that macro-generated
+/// enforcement. There is no public constructor. This guarantees that macro-generated
 /// handler entry points (which take a `Ctx`) cannot be invoked without passing through
 /// the policy pipeline.
 pub struct Ctx<'a, S> {

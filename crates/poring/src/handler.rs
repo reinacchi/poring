@@ -3,7 +3,7 @@
 //! A [`Handler`] is an `async` function or closure taking up to eight extractors. Each
 //! argument is extracted with the same [`FromRequest`] implementation the attribute macros
 //! use, so extraction order, body limits, validation and rejections are identical. Handlers
-//! are type-erased once at startup; each request costs one boxed future.
+//! are type-erased once at startup. Each request costs one boxed future.
 
 use std::future::Future;
 use std::marker::PhantomData;
@@ -19,7 +19,7 @@ use crate::response::{IntoResponse, Response};
 use crate::schema::SchemaRegistry;
 
 /// Generates the route registration methods shared by `Poring`, `Group` and the macro
-/// app `Builder`. `$S` is the app state type; the implementing type provides
+/// app `Builder`. `$S` is the app state type. The implementing type provides
 /// `fn push_route(self, NativeRoute<$S>) -> Self`.
 macro_rules! route_methods {
     ($S:ty) => {
@@ -47,7 +47,7 @@ macro_rules! route_methods {
         /// Registers a WebSocket route: a `GET` route for the HTTP/1.1 upgrade that, with the
         /// `http2` feature, is also reachable through HTTP/2 Extended CONNECT (RFC 8441). It
         /// goes through the same policy pipeline as every route (origin check, rate limit,
-        /// authentication, authorization, hooks).
+        /// authentication, authorisation, hooks).
         ///
         /// # Panics
         ///
@@ -381,7 +381,7 @@ impl<S, A: 'static, H: Handler<A, S>> ErasedHandler<S> for Erased<H, A> {
 ///
 /// Implemented for `()`, `Option<Response>` and `Result<(), E>` where `E: IntoResponse`.
 pub trait HookOutcome {
-    /// `Ok(())` continues; `Err(response)` short-circuits the request.
+    /// `Ok(())` continues. `Err(response)` short-circuits the request.
     #[allow(clippy::result_large_err)]
     fn into_outcome(self) -> Result<(), Response>;
 }
@@ -457,7 +457,7 @@ impl<S> Hooks<S> {
         self.after.iter().map(|(n, _)| n.as_str())
     }
 
-    /// Runs the before hooks in order; the first early response wins.
+    /// Runs the before hooks in order. The first early response wins.
     pub(crate) fn run_before(&self, cx: &mut Ctx<'_, S>) -> Result<(), Response> {
         for (_, h) in &self.before {
             cx.__mark_before();
@@ -564,14 +564,14 @@ impl<S: Send + Sync + 'static> Group<S> {
 
     /// The group's rate limit, inherited by routes that do not declare their own. With
     /// [`RateScope::Group`](crate::policy::RateScope::Group) every such route shares one
-    /// bucket per client; otherwise each route has its own.
+    /// bucket per client. Otherwise each route has its own.
     pub fn rate_limit(mut self, limit: crate::policy::RateLimit) -> Self {
         self.rate_limit = Some(limit);
         self
     }
 
     /// Adds a before hook, run after the app-level hooks for every route in the group.
-    /// Returning an early response skips the handler; after hooks still run.
+    /// Returning an early response skips the handler. After hooks still run.
     pub fn before<F, O>(mut self, hook: F) -> Self
     where
         F: for<'a, 'b> Fn(&'b mut Ctx<'a, S>) -> O + Send + Sync + 'static,
