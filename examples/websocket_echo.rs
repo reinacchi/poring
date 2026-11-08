@@ -51,7 +51,9 @@ async fn echo(ws: WebSocketUpgrade) -> Response {
                         error: "malformed json",
                         issues: vec![],
                     },
-                    Err(WsError::Socket(_)) => break,
+                    // Transport errors, rate limiting (`WsError::RateLimited`) and any
+                    // future error kinds end the session.
+                    Err(_) => break,
                 };
                 // `send` waits when the client reads slowly (bounded write buffer).
                 if sock.send(&reply).await.is_err() {

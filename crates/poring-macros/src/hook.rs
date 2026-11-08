@@ -1,7 +1,7 @@
 //! `#[poring::hook]`: turns an `async fn` into a statically dispatched lifecycle hook.
 //!
 //! * `async fn name(cx: &mut Ctx<'_, S>) -> R` becomes a *before* hook (guard). `R` is
-//!   `()`, `Result<(), E: IntoResponse>` or `Option<Response>`; `Err`/`Some` short-circuits.
+//!   `()`, `Result<(), E: IntoResponse>` or `Option<Response>`. `Err`/`Some` short-circuits.
 //! * `async fn name(cx: &Ctx<'_, S>, res: &mut Response)` becomes an *after* hook.
 
 use proc_macro2::TokenStream;

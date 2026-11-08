@@ -1,4 +1,4 @@
-//! `poring` pins `poring-macros` exactly; the pin must name the macros crate's own version.
+//! `poring` pins `poring-macros` exactly. The pin must name the macros crate's own version.
 
 fn read(path: &str) -> String {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");

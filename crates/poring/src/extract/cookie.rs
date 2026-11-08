@@ -22,7 +22,7 @@ pub fn find_cookie<'h>(headers: &'h HeaderMap, name: &str) -> Option<&'h str> {
         .map(|(_, v)| v.trim_matches('"'))
 }
 
-/// A typed cookie value; `T` declares the cookie name via [`Named`] and parses with
+/// A typed cookie value. `T` declares the cookie name via [`Named`] and parses with
 /// `FromStr`. Missing or unparsable cookies are rejected with 400 (use `Option<Cookie<T>>`
 /// for optional cookies).
 #[derive(Clone, Debug, PartialEq, Eq)]

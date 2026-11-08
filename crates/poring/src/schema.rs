@@ -23,7 +23,7 @@ impl SchemaRegistry {
         Self::default()
     }
 
-    /// Registers a named component (once; recursion-safe) and returns a `$ref` to it.
+    /// Registers a named component (once, recursion-safe) and returns a `$ref` to it.
     pub fn component(
         &mut self,
         name: &str,

@@ -22,12 +22,14 @@ pub fn status_of(raw: &str) -> u16 {
         .unwrap_or(0)
 }
 
+pub mod auth;
 pub mod secure;
+#[cfg(feature = "json")]
 pub mod shop;
 
 /// Compares `actual` with `tests/snapshots/{name}`. Line endings are normalised, so a
 /// Windows checkout with CRLF line endings compares equal. Set `UPDATE_SNAPSHOTS=1` to
-/// (re)write snapshots; a missing snapshot is an error otherwise.
+/// (re)write snapshots. A missing snapshot is an error otherwise.
 pub fn snapshot(name: &str, actual: &str) {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("snapshots")

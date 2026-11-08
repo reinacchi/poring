@@ -28,6 +28,8 @@ pub mod stage {
     pub const SEND: &str = "send";
     /// Per-route CORS origin check.
     pub const CORS: &str = "cors";
+    /// WebSocket handshake origin check (WebSocket routes only).
+    pub const WS_ORIGIN: &str = "ws_origin";
     /// Rate-limit bucket check.
     pub const RATE_LIMIT: &str = "rate_limit";
     /// Authentication (trusted authenticator).
@@ -337,6 +339,10 @@ fn add_route(b: &mut Builder, r: &RouteEntry, matcher: &str, send: &str) {
 
     for check in &r.policy.checks {
         let (label, denials): (String, &[(&str, &str)]) = match check.as_str() {
+            "ws_origin" => (
+                "WebSocket handshake origin check".into(),
+                &[("403", "origin not allowed")],
+            ),
             "cors" => ("CORS origin check".into(), &[("403", "origin not allowed")]),
             "rate_limit" => {
                 let mut rl = match &r.policy.rate_limit {

@@ -1,7 +1,7 @@
 //! A Rust guest for the Poring WIT world (`wit/poring-plugin.wit`).
 //!
 //! `no_std` + `alloc` with a bump allocator: every request runs in a fresh instance whose
-//! memory is discarded afterwards, so freeing is unnecessary. No WASI is imported; the guest
+//! memory is discarded afterwards, so freeing is unnecessary. No WASI is imported. The guest
 //! has no filesystem, network, clock or environment access.
 #![cfg_attr(target_arch = "wasm32", no_std)]
 
@@ -12,7 +12,7 @@ use alloc::string::String;
 use alloc::vec;
 
 wit_bindgen::generate!({
-    path: "../../wit",
+    path: "../../crates/poring/wit",
     world: "guest",
 });
 
@@ -61,7 +61,7 @@ mod rt {
 
     unsafe impl GlobalAlloc for Bump {
         unsafe fn alloc(&self, l: Layout) -> *mut u8 {
-            // SAFETY: single-threaded; the cell is only accessed here.
+            // SAFETY: single-threaded. The cell is only accessed here.
             let next = unsafe { &mut *self.0.get() };
             if *next == 0 {
                 *next = core::arch::wasm32::memory_size(0) * 65536;

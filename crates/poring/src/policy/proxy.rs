@@ -183,7 +183,7 @@ mod tests {
     #[test]
     fn trusted_chains_are_read_from_the_right() {
         let lb = TrustedProxies::parse(["10.0.0.0/8", "192.168.0.1"]).unwrap();
-        // The client prepended a fake address; the load balancer appended the real one.
+        // The client prepended a fake address. The load balancer appended the real one.
         let h = headers(&["6.6.6.6, 198.51.100.7", "192.168.0.1"]);
         assert_eq!(lb.client_ip(ip("10.0.0.2"), &h), ip("198.51.100.7"));
         assert_eq!(lb.client_ip(ip("10.0.0.2"), &headers(&[])), ip("10.0.0.2"));

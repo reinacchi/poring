@@ -118,7 +118,7 @@ impl RateLimit {
         self
     }
 
-    /// Partitions by authenticated subject. Only valid on authenticated routes; the check
+    /// Partitions by authenticated subject. Only valid on authenticated routes. The check
     /// then runs after authentication.
     pub const fn by_principal(mut self) -> Self {
         self.key = RateKey::Principal;
@@ -216,7 +216,7 @@ pub struct RateLimitStatus {
     pub limit: u32,
     /// Whole requests that would be admitted right now.
     pub remaining: u32,
-    /// Time until another request is admitted; zero while `remaining > 0`.
+    /// Time until another request is admitted. Zero while `remaining > 0`.
     pub next_token_after: Duration,
     /// Time until the bucket is full again if no further requests arrive.
     pub full_refill_after: Duration,
@@ -234,11 +234,11 @@ impl RateLimitStatus {
 /// Outcome of a rate-limit check.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RateLimitDecision {
-    /// Admitted; one token was taken from every applicable bucket.
+    /// Admitted. One token was taken from every applicable bucket.
     Allowed(RateLimitStatus),
-    /// Throttled; nothing was consumed.
+    /// Throttled. Nothing was consumed.
     Denied(RateLimitStatus),
-    /// The bucket table is full of active buckets; nothing was consumed and the request
+    /// The bucket table is full of active buckets. Nothing was consumed and the request
     /// must be rejected (fail closed). `retry_after` estimates when space frees up.
     Saturated {
         /// Time until at least one bucket can be reclaimed.
@@ -479,7 +479,7 @@ fn evaluate(rule: RateRule, tat: Option<u128>, now_ns: u64) -> Evaluated {
 }
 
 impl RateLimiter {
-    /// Creates a limiter holding at most `capacity` buckets (clamped to 1..=[`MAX_KEYS`];
+    /// Creates a limiter holding at most `capacity` buckets (clamped to 1..=[`MAX_KEYS`],
     /// apps reject out-of-range values before binding).
     pub fn new(capacity: usize) -> Self {
         RateLimiter {
@@ -559,7 +559,7 @@ impl RateLimiter {
 
     /// Takes one token from every probed bucket, or from none if any of them is empty.
     ///
-    /// On denial the status of the bucket with the longest wait is returned; on success
+    /// On denial the status of the bucket with the longest wait is returned. On success
     /// the status of the most constraining bucket (fewest remaining requests).
     pub fn check(&self, probes: &[RateProbe<'_>], now: Instant) -> RateLimitDecision {
         self.decide(probes, now, true).0
@@ -819,7 +819,7 @@ mod tests {
                 }],
                 t0,
             ));
-            // One token was taken by the allowed request; the peek accounts for the next.
+            // One token was taken by the allowed request. The peek accounts for the next.
             assert_eq!(
                 s.remaining, 8,
                 "a denied request takes no token from any bucket"

@@ -6,16 +6,16 @@
 //! [`super::resolve()`], and both are covered by tests.
 //!
 //! Checks performed here:
-//! * duplicate `METHOD path` registrations;
+//! * duplicate `METHOD path` registrations.
 //! * ambiguous paths that differ only in parameter names, and catch-all vs. parameter
-//!   conflicts at the same position;
+//!   conflicts at the same position.
 //! * routes whose effective policy requires authentication in an app without an
-//!   authenticator;
-//! * `Principal<..>` extractors on routes that are not authenticated;
+//!   authenticator.
+//! * `Principal<..>` extractors on routes that are not authenticated.
 //! * public routes under a strict (`deny_anonymous`) ancestor without a documented
-//!   reason, and public routes silently dropping inherited scopes/roles;
-//! * routes or groups raising an inherited body limit;
-//! * credentialed CORS with a wildcard origin (also rejected earlier by the macro);
+//!   reason, and public routes silently dropping inherited scopes/roles.
+//! * routes or groups raising an inherited body limit.
+//! * credentialed CORS with a wildcard origin (also rejected earlier by the macro).
 //! * principal-keyed rate limits on routes that are not authenticated.
 
 use crate::descriptor::{AppDescriptor, GroupDescriptor, RouteRef};

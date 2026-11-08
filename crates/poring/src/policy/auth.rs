@@ -124,7 +124,7 @@ pub enum AuthError {
 /// The app's trusted authentication facility.
 ///
 /// Declared once per app (`auth: MyAuthenticator` in `poring_app!`) and supplied at
-/// startup through the typed builder (`.authenticator(..)`); an app that declares an
+/// startup through the typed builder (`.authenticator(..)`). An app that declares an
 /// authenticator cannot be started without one (compile error).
 pub trait Authenticator: Send + Sync + 'static {
     /// Whether this authenticator may accept ambient cookie credentials. When `true`,

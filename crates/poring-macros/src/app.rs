@@ -481,7 +481,7 @@ pub fn expand_app(input: TokenStream) -> syn::Result<TokenStream> {
     let n_static = idx as usize;
     let n_groups_static = a.groups.len();
 
-    // Plugins: appended after static routes; lengths are only known in const context.
+    // Plugins: appended after static routes. Lengths are only known in const context.
     let mut plugin_consts = Vec::new();
     let mut plugin_fill = Vec::new();
     let mut plugin_arms = Vec::new();
