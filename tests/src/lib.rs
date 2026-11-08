@@ -29,7 +29,7 @@ pub mod shop;
 
 /// Compares `actual` with `tests/snapshots/{name}`. Line endings are normalised, so a
 /// Windows checkout with CRLF line endings compares equal. Set `UPDATE_SNAPSHOTS=1` to
-/// (re)write snapshots; a missing snapshot is an error otherwise.
+/// (re)write snapshots. A missing snapshot is an error otherwise.
 pub fn snapshot(name: &str, actual: &str) {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("snapshots")

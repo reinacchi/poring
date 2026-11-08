@@ -1,5 +1,5 @@
-//! Allocation measurements for typed WebSocket messages (P5.1). A typed echo round trip
-//! over real TCP is measured with dhat; the numbers include the tokio-tungstenite test
+//! Allocation measurements for typed WebSocket messages. A typed echo round trip
+//! over real TCP is measured with dhat. The numbers include the tokio-tungstenite test
 //! client, so they are an upper bound on the server-side cost. The budget catches
 //! regressions such as re-introducing a per-message payload copy in `TypedSocket::recv`.
 
@@ -18,10 +18,10 @@ struct Chat {
     text: String,
 }
 
-/// Bytes allocated per typed echo round trip with a ~4 KiB payload: 20 670 measured after
-/// P5.1 (24 777 before, with the payload copy) on rustc 1.99.1 / Windows, plus headroom.
+/// Bytes allocated per typed echo round trip with a ~4 KiB payload: 20 670 measured on
+/// Windows (24 777 with the old payload copy), plus headroom.
 const BYTES_PER_ROUND_TRIP_4K: f64 = 22_500.0;
-/// Allocations per round trip (6.0 measured; 7.0 with the old payload copy).
+/// Allocations per round trip (6.0 measured, 7.0 with the old payload copy).
 const BLOCKS_PER_ROUND_TRIP: f64 = 6.5;
 
 #[tokio::test(flavor = "current_thread")]

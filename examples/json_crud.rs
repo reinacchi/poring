@@ -57,7 +57,7 @@ struct TodoStore {
 
 impl TodoStore {
     fn with<R>(&self, f: impl FnOnce(&mut (u64, BTreeMap<u64, Todo>)) -> R) -> R {
-        // A poisoned mutex only means another request panicked mid-update; the map is
+        // A poisoned mutex only means another request panicked mid-update. The map is
         // still structurally valid for this demo store.
         let mut g = self.inner.lock().unwrap_or_else(|p| p.into_inner());
         f(&mut g)

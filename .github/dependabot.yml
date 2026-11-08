@@ -1,0 +1,17 @@
+# Weekly dependency update PRs. Every PR runs the full ci + heavy (+ security) checks, so
+# an update only merges once the whole matrix, the package check and cargo audit pass.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule: { interval: weekly, day: monday }
+    open-pull-requests-limit: 5
+    groups:
+      patch-and-minor:
+        update-types: [minor, patch]
+  - package-ecosystem: cargo
+    directory: "/benches/ws-bench"
+    schedule: { interval: monthly }
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule: { interval: weekly, day: monday }

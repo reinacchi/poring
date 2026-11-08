@@ -6,12 +6,12 @@
 //! here, before authentication and before the handler can answer `101`:
 //!
 //! * no `Origin` header: allowed. Non-browser clients do not send one and can forge it
-//!   anyway; Origin is a browser-side defence, **not** authentication.
+//!   anyway. Origin is a browser-side defence, **not** authentication.
 //! * exactly one `Origin` that is same-origin with the request (`Host`, or the URI
 //!   authority for HTTP/2), listed explicitly in the app's CORS origins, or listed in
 //!   [`WsOrigins::allow`]: allowed.
-//! * anything else — another origin, `null`, a malformed value, several `Origin`
-//!   headers, or an origin only matched by the CORS wildcard `*` — is rejected with 403.
+//! * anything else is rejected with 403: another origin, `null`, a malformed value,
+//!   several `Origin` headers, or an origin only matched by the CORS wildcard `*`.
 //!   The `Origin` value is validated *before* any allowlist is consulted, so listing
 //!   `"null"` (or any non-origin string) in the HTTP CORS configuration never admits a
 //!   WebSocket handshake. Opaque origins cannot be allowed except through
@@ -21,9 +21,9 @@
 //! without a port uses its scheme's default (80 / 443). The scheme must match too whenever
 //! the endpoint's own scheme is known:
 //!
-//! * the connection uses Poring's native TLS (`tls-rustls`): the endpoint is `https`/`wss`;
+//! * the connection uses Poring's native TLS (`tls-rustls`): the endpoint is `https`/`wss`.
 //! * a trusted reverse proxy reports the public scheme (`Forwarded: proto=` or
-//!   `X-Forwarded-Proto`): that scheme;
+//!   `X-Forwarded-Proto`): that scheme.
 //! * otherwise an HTTP/2 request's `:scheme`.
 //!
 //! An `http://` origin is therefore never accepted implicitly for an HTTPS/WSS endpoint, and
@@ -44,7 +44,7 @@
 //! ignored and the check falls back to `Host`. From untrusted peers these headers are
 //! always ignored. Alternatively list the public origin with [`WsOrigins::allow`].
 //!
-//! [`WsOrigins::any`] disables the check; `build()` refuses it when the authenticator
+//! [`WsOrigins::any`] disables the check. `build()` refuses it when the authenticator
 //! accepts cookies, because that combination is exactly cross-site WebSocket hijacking.
 
 use http::HeaderMap;
@@ -248,7 +248,7 @@ pub(crate) fn origin_allowed(
         return false;
     };
     // Validate before consulting any allowlist: an opaque (`null`) or malformed origin is
-    // never allowed, even if the HTTP CORS configuration lists it verbatim — a sandboxed
+    // never allowed, even if the HTTP CORS configuration lists it verbatim. A sandboxed
     // iframe or a `data:` page sends `Origin: null` and would otherwise ride the user's
     // cookies.
     let raw = origin;
@@ -631,8 +631,8 @@ mod tests {
         };
         assert!(tls("a.test", "https://a.test"));
         assert!(tls("a.test:8443", "https://a.test:8443"));
-        // The P1 regression: `Host` without a port used to accept `http://a.test` (port 80)
-        // for a TLS endpoint, letting a network attacker's plain-HTTP page ride cookies.
+        // A `Host` without a port must not accept `http://a.test` (port 80) for a TLS
+        // endpoint, or a network attacker's plain-HTTP page could ride the user's cookies.
         assert!(!tls("a.test", "http://a.test"));
         assert!(!tls("a.test:8443", "http://a.test:8443"));
         assert!(!tls("a.test", "http://a.test:443"));

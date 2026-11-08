@@ -12,15 +12,15 @@
 //!
 //! Profiles (all sized by `--conns` and `--secs`):
 //!
-//! * `idle`     — connections open, no traffic, held for `secs`;
-//! * `small`    — closed-loop echo of 64 B messages;
-//! * `medium`   — closed-loop echo of 4 KiB messages;
-//! * `large`    — closed-loop echo of 256 KiB messages (connections capped at 256);
-//! * `slow`     — the server floods 64 KiB messages to clients that never read; heartbeat
-//!   and write deadlines must reclaim every session with bounded memory;
-//! * `churn`    — connect, exchange one message, close, repeated for `secs`;
-//! * `abrupt`   — connections dropped without a close handshake;
-//! * `shutdown` — graceful shutdown while every connection is echoing.
+//! * `idle`: connections open, no traffic, held for `secs`.
+//! * `small`: closed-loop echo of 64 B messages.
+//! * `medium`: closed-loop echo of 4 KiB messages.
+//! * `large`: closed-loop echo of 256 KiB messages (connections capped at 256).
+//! * `slow`: the server floods 64 KiB messages to clients that never read. Heartbeat
+//!   and write deadlines must reclaim every session with bounded memory.
+//! * `churn`: connect, exchange one message, close, repeated for `secs`.
+//! * `abrupt`: connections dropped without a close handshake.
+//! * `shutdown`: graceful shutdown while every connection is echoing.
 //!
 //! Reported: handshakes ok/failed, messages/s, MiB/s, round-trip p50/p95/p99, server CPU
 //! (% of one core) and RSS (before, peak, after cleanup), open descriptors (Linux),
@@ -365,7 +365,7 @@ async fn connect_all(addr: SocketAddr, path: &str, n: usize) -> (Vec<Ws>, usize)
     (socks, failed)
 }
 
-/// Closed-loop echo on every socket until `until`; returns latencies (us, after
+/// Closed-loop echo on every socket until `until`. Returns latencies (us, after
 /// `measure_from`), errors and the sockets that are still usable.
 async fn echo_all(
     socks: Vec<Ws>,
@@ -430,7 +430,7 @@ async fn close_all(socks: Vec<Ws>) {
     while set.join_next().await.is_some() {}
 }
 
-/// Waits (bounded) until the server reports no active session; returns how long it took.
+/// Waits (bounded) until the server reports no active session. Returns how long it took.
 async fn until_clean(
     stats: &mut tokio::sync::watch::Receiver<Stats>,
     bound: Duration,

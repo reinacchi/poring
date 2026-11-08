@@ -55,7 +55,7 @@ pub struct EffectivePolicy {
     /// Route reads the request body (enables the body gate).
     pub reads_body: bool,
     /// Route serves WebSocket handshakes (enables the `ws_origin` check). Set by the
-    /// planner from the route declaration; [`resolve()`] leaves it `false`.
+    /// planner from the route declaration. [`resolve()`] leaves it `false`.
     pub websocket: bool,
     /// WebSocket origins declared by the most specific level (`None`: the app's
     /// `.ws_origins(..)` configuration applies).
@@ -173,7 +173,7 @@ pub struct AppContext {
     pub cors: bool,
     /// App-wide rate limit enforced in addition to every route's own limit. A
     /// principal-keyed ceiling covers authenticated routes only (public routes have no
-    /// principal); use an IP-keyed ceiling to cover every route.
+    /// principal). Use an IP-keyed ceiling to cover every route.
     pub ceiling: Option<RateLimitSpec>,
 }
 

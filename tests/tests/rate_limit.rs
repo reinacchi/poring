@@ -52,7 +52,7 @@ async fn burst_remaining_and_retry_after_headers() {
         assert_eq!(r.header("cache-control"), Some("private, no-store"));
         remaining.push(r.header("ratelimit").unwrap().to_owned());
     }
-    // 3 per 30 s: a token every 10 s; the bucket still has tokens until the third request.
+    // 3 per 30 s: a token every 10 s. The bucket still has tokens until the third request.
     assert_eq!(
         remaining,
         [

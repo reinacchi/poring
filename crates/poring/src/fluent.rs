@@ -95,7 +95,7 @@ impl<S: Send + Sync + 'static> Poring<S, NoAuth> {
 
 impl<Au: Authenticator> Poring<(), Au> {
     /// Supplies the shared state. Handlers are type-checked against the state type, so
-    /// this must be called before any route, group or hook is registered; otherwise
+    /// this must be called before any route, group or hook is registered. Otherwise
     /// [`build`](Poring::build) fails.
     pub fn state<S: Send + Sync + 'static>(self, state: S) -> Poring<S, Au> {
         Poring {
@@ -161,7 +161,7 @@ impl<S: Send + Sync + 'static, Au: Authenticator> Poring<S, Au> {
 
     /// The app's default rate limit, inherited by every route that does not declare its
     /// own (the most specific declaration wins). With [`RateScope::App`] all those routes
-    /// share one bucket per client; otherwise each route has its own. For a limit that
+    /// share one bucket per client. Otherwise each route has its own. For a limit that
     /// routes cannot override, use [`rate_limit_ceiling`](Poring::rate_limit_ceiling).
     ///
     /// [`RateScope::App`]: crate::policy::RateScope::App
@@ -177,8 +177,8 @@ impl<S: Send + Sync + 'static, Au: Authenticator> Poring<S, Au> {
     }
 
     /// Adds an app-level before hook, run for every fluent route before group hooks.
-    /// Returning an early response (`Err(e)` or `Some(response)`) skips the handler;
-    /// after hooks still run.
+    /// Returning an early response (`Err(e)` or `Some(response)`) skips the handler.
+    /// After hooks still run.
     pub fn before<F, O>(mut self, hook: F) -> Self
     where
         F: for<'a, 'b> Fn(&'b mut Ctx<'a, S>) -> O + Send + Sync + 'static,
@@ -269,7 +269,7 @@ impl<S: Send + Sync + 'static, Au: Authenticator> Poring<S, Au> {
     /// Ctrl-C. For a synchronous `main`.
     ///
     /// Returns [`StartupError::NestedRuntime`] instead of panicking when called from
-    /// inside a Tokio runtime; use [`listen`](Poring::listen) there.
+    /// inside a Tokio runtime. Use [`listen`](Poring::listen) there.
     pub fn run(self, addr: impl tokio::net::ToSocketAddrs) -> Result<(), StartupError> {
         if tokio::runtime::Handle::try_current().is_ok() {
             return Err(StartupError::NestedRuntime);
@@ -285,7 +285,7 @@ impl<S: Send + Sync + 'static, Au: Authenticator> Poring<S, Au> {
 
 /// The fluent builder doubles as the type-level marker of the apps it builds, so a built
 /// fluent app is an `App<Poring<S, Au>>` (see [`FluentApp`]). It declares no
-/// macro routes; all of its routes are native.
+/// macro routes. All of its routes are native.
 impl<S: Send + Sync + 'static, Au: Authenticator> AppSpec for Poring<S, Au> {
     type State = S;
     type Auth = Au;

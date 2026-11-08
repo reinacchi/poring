@@ -1,5 +1,5 @@
 //! Server shutdown supervision: once `shutdown()` (or `serve`) returns, no connection task,
-//! HTTP/2 stream task or WebSocket session may still be running — whatever outlived the
+//! HTTP/2 stream task or WebSocket session may still be running. Whatever outlived the
 //! grace period has been cancelled. Covers HTTP/1.1, slow request bodies, HTTP/2, TLS and
 //! upgraded WebSocket sessions.
 
@@ -38,7 +38,7 @@ async fn eventually(what: &str, mut cond: impl FnMut() -> bool) {
     }
 }
 
-/// `/hang` never completes; `/slow` reads a request body.
+/// `/hang` never completes. `/slow` reads a request body.
 fn app(probe: Probe) -> poring::Poring {
     Poring::new()
         .limits(poring::Limits {

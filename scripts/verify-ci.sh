@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # One-command CI verification for Poring. GitHub Actions runs these same targets (see
 # .github/workflows/ci.yml and heavy.yml call this script), so a green local run means the
-# same commands pass; the remote CI is still the authoritative check.
+# same commands pass. The remote CI is still the authoritative check.
 #
 # Usage:
 #   scripts/verify-ci.sh [--fail-fast] [TARGET [ENTRY]]
@@ -264,7 +264,7 @@ t_ci() {
 
 # Builds the benchmark harness and runs a small sustained-load pass: every profile
 # (idle, echo, slow readers, churn, abrupt disconnects, shutdown under load) at 100
-# connections. The harness asserts nothing about speed; it fails if sessions leak.
+# connections. The harness asserts nothing about speed. It fails if sessions leak.
 t_stress_smoke() {
   run "${CARGO[@]}" build --release --locked --manifest-path benches/ws-bench/Cargo.toml &&
     run stress_smoke_check
@@ -285,7 +285,7 @@ stress_smoke_check() {
 }
 
 # RustSec advisories for the workspace and every standalone lockfile (benches, guest).
-# Warnings (unmaintained/yanked crates) are printed; vulnerabilities fail the target.
+# Warnings (unmaintained/yanked crates) are printed. Vulnerabilities fail the target.
 t_security() {
   need cargo-audit "cargo install --locked cargo-audit" || return
   local lock

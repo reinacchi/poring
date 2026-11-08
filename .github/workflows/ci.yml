@@ -10,14 +10,14 @@ env:
   RUST_BACKTRACE: "1"
 
 # Every command lives in scripts/verify-ci.sh, so local verification
-# (`RUST_TOOLCHAIN=1.97.0 scripts/verify-ci.sh ci`) runs exactly what CI runs; the matrices
+# (`RUST_TOOLCHAIN=1.97.0 scripts/verify-ci.sh ci`) runs exactly what CI runs. The matrices
 # below name entries of the script's lists (an unknown entry fails the job).
 #
 # Every job pins the declared MSRV (`rust-version` = 1.97): the trybuild snapshots in
 # tests/ui record this compiler's exact diagnostics. Cargo commands run with `--locked`.
 #
 # Feature isolation: `poring-tests` and `poring-examples` depend on Poring without its
-# default features; every optional feature is selected explicitly, and every integration
+# default features. Every optional feature is selected explicitly, and every integration
 # test declares `required-features`. A job therefore tests exactly the features it names.
 #
 # Actions are pinned by commit (Node 24 runtimes). Heavyweight jobs (Wasm family,

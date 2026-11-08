@@ -11,7 +11,7 @@
 #
 # Tunables (environment): PERF_DURATION (default 10s), PERF_WARMUP (3s), PERF_REPEAT (5),
 # PERF_CONCURRENCY (64), PERF_ENDPOINTS (space-separated paths), PERF_PORT (3990),
-# PERF_SERVER_CPUS / PERF_CLIENT_CPUS (taskset lists; empty = unpinned), PERF_HEADERS
+# PERF_SERVER_CPUS / PERF_CLIENT_CPUS (taskset lists, empty = unpinned), PERF_HEADERS
 # (extra oha -H arguments, e.g. "Authorization: Bearer bench").
 set -euo pipefail
 
@@ -68,7 +68,7 @@ for ep in $endpoints; do
     if [[ "$ep" == /bench/post ]]; then
         method=(-m POST -T application/json -D "$body")
     fi
-    # Fail early on a wrong status; keep the body for byte-for-byte comparison.
+    # Fail early on a wrong status. Keep the body for byte-for-byte comparison.
     if [[ "$ep" == /bench/post ]]; then
         curl -sf "${auth[@]}" -H content-type:application/json --data-binary "@$body" "$url" \
             -o "$out/$name.body"

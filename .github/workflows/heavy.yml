@@ -5,7 +5,7 @@ name: heavy
 # master, on every push to master, on release tags, weekly (to catch dependency and
 # toolchain drift) and on demand (Actions > heavy > Run workflow). Make the `heavy-gate`
 # job a required status check on master. Commands live in scripts/verify-ci.sh
-# (`scripts/verify-ci.sh heavy`; `release` adds the security audit).
+# (`scripts/verify-ci.sh heavy`, `release` adds the security audit).
 on:
   pull_request:
     branches: [master, main]
@@ -48,7 +48,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
         with: { toolchain: "1.97.0", targets: "wasm32-unknown-unknown" }
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      # Wasm guest tests, the hot-reload demo (guest replaced in a running host; a broken
+      # Wasm guest tests, the hot-reload demo (guest replaced in a running host, a broken
       # artefact is rejected) and the standalone Rust guest (not a workspace member).
       - run: bash scripts/verify-ci.sh --fail-fast wasm-tests
 
@@ -94,7 +94,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
         with: { toolchain: "1.97.0" }
       - run: cargo install --locked cargo-audit
-      # RustSec advisories for every lockfile; a vulnerability fails the job.
+      # RustSec advisories for every lockfile. A vulnerability fails the job.
       - run: bash scripts/verify-ci.sh --fail-fast security
 
   # One required status check for branch protection and the release workflow.

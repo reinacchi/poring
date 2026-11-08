@@ -68,3 +68,33 @@ async fn main() -> Result<(), poring::StartupError> {
 ```
 
 See more examples [here](/examples/).
+
+## Cargo features
+
+| Feature | Default | Enables |
+|---|---|---|
+| `json` | yes | `Json<T>` extractor and response |
+| `trace-flow` | yes | runtime flow recorder for the flow graph |
+| `openapi` | yes | OpenAPI 3.1 document and TypeScript client generation |
+| `http2` | | HTTP/2 alongside HTTP/1.1 (and RFC 8441 WebSockets) |
+| `websocket` | | WebSocket routes: raw, typed and managed sessions |
+| `multipart` | | `Multipart` extractor with size and part limits |
+| `tls-rustls` | | native HTTPS/WSS with rustls |
+| `wasm` | | sandboxed Wasm component guest routes (Wasmtime) |
+| `hot-reload` | | Wasm guest hot reload (implies `wasm`) |
+| `guest-kit` | | build guest components from WAT/Wasm (implies `wasm`) |
+| `cli` | | the `cargo-poring` tool (implies the Wasm features) |
+
+Minimum supported Rust version: **1.97** (edition 2024). Supported platform: Linux
+x86_64. Others are expected to work but are not tested in CI.
+
+## Production
+
+* Start from `Limits::production()` and the endpoint presets `ws.production()` and
+  `.managed().production()`, then tighten them for your workload.
+  `production_warnings()` lists any setting that is still unbounded.
+* [`examples/websocket_production.rs`](/examples/websocket_production.rs) shows a
+  complete service: session caps, trusted proxies, origin checks, authentication for
+  browser and non-browser clients, message quotas and metrics.
+* Report security issues privately through
+  [GitHub security advisories](https://github.com/reinacchi/poring/security/advisories/new).

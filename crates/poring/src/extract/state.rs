@@ -6,8 +6,8 @@ use crate::extract::{ExtractorMeta, FromRequest};
 
 /// Projects a piece of state `Self` out of the app state `S`.
 ///
-/// `#[derive(PoringState)]` on your state struct implements this for every field type;
-/// every type also provides itself. A handler requesting `State<T>` from an app whose
+/// `#[derive(PoringState)]` on your state struct implements this for every field type.
+/// Every type also provides itself. A handler requesting `State<T>` from an app whose
 /// state cannot provide `T` fails to compile.
 #[diagnostic::on_unimplemented(
     message = "app state `{S}` does not provide `{Self}`",

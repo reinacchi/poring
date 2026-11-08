@@ -17,14 +17,14 @@
 //! For each framework the harness starts this binary as a **separate server process**
 //! (same build, same Tokio version, release mode) and drives it from the client process:
 //!
-//! * **connect** — `conns` concurrent WebSocket handshakes; reports handshakes/s and
-//!   handshake latency p50/p99;
-//! * **echo** — each connection sends a `size`-byte binary message and waits for the echo
-//!   (closed loop) for `secs` seconds after a 1 s warm-up; reports round trips/s, MiB/s
-//!   (payload, one direction), round-trip latency p50/p95/p99;
-//! * **server resources** — CPU (% of one core, averaged) and resident memory of the server
-//!   process sampled every 250 ms during the echo phase (sysinfo);
-//! * **close** — time until every connection's close handshake completed.
+//! * **connect**: `conns` concurrent WebSocket handshakes. Reports handshakes/s and
+//!   handshake latency p50/p99.
+//! * **echo**: each connection sends a `size`-byte binary message and waits for the echo
+//!   (closed loop) for `secs` seconds after a 1 s warm-up. Reports round trips/s, MiB/s
+//!   (payload, one direction), round-trip latency p50/p95/p99.
+//! * **server resources**: CPU (% of one core, averaged) and resident memory of the server
+//!   process sampled every 250 ms during the echo phase (sysinfo).
+//! * **close**: time until every connection's close handshake completed.
 //!
 //! Both servers echo text/binary messages unchanged with a 1 MiB message limit, plain
 //! HTTP/1.1, no TLS, no JSON. Client and server share the machine: report hardware and

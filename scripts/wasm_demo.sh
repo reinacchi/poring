@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Smoke demo: change a mounted Wasm guest's response while the native host
-# process keeps running (same PID); a broken artefact leaves traffic working.
+# process keeps running (same PID). A broken artefact leaves traffic working.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 cargo build -q -p poring --features cli --bin cargo-poring

@@ -1,5 +1,5 @@
-//! Native TLS (HTTPS / WSS) with `poring/tls-rustls` (P5.5). Certificates are generated at
-//! test time with rcgen; the client is tokio-rustls trusting only that certificate.
+//! Native TLS (HTTPS / WSS) with `poring/tls-rustls`. Certificates are generated at
+//! test time with rcgen. The client is tokio-rustls trusting only that certificate.
 //!
 //! Run with `cargo test -p poring-tests --no-default-features --features tls --test tls`
 //! (add `,http2` to also test ALPN `h2` and RFC 8441 over TLS).
@@ -236,7 +236,7 @@ async fn plaintext_and_stalled_clients_do_not_block_tls_service() {
     server.shutdown().await.unwrap();
 }
 
-/// Raw HTTP/1.1 WebSocket handshake over TLS; returns the response head.
+/// Raw HTTP/1.1 WebSocket handshake over TLS. Returns the response head.
 async fn tls_handshake_head(pki: &Pki, addr: SocketAddr, origin: Option<&str>) -> String {
     let mut tls = tls_connect(pki, addr, &[b"http/1.1"]).await;
     let origin = origin
@@ -267,8 +267,8 @@ async fn tls_handshake_head(pki: &Pki, addr: SocketAddr, origin: Option<&str>) -
     String::from_utf8_lossy(&buf).into_owned()
 }
 
-/// P1 regression: on a native TLS (wss://) endpoint, a same-host `http://` origin used to be
-/// accepted (the scheme was ignored). It must be refused; the `https://` origin upgrades.
+/// On a native TLS (wss://) endpoint, a same-host `http://` origin is cross-origin and must
+/// be refused, while the `https://` origin upgrades.
 #[tokio::test]
 async fn wss_endpoints_refuse_plain_http_origins() {
     let pki = pki();

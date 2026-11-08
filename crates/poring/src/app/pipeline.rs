@@ -178,7 +178,7 @@ impl<A: AppSpec> AppInner<A> {
                         r
                     }
                 };
-                // Preflight responses already carry CORS headers; don't re-apply.
+                // Preflight responses already carry CORS headers. Don't re-apply.
                 self.finish(
                     r,
                     Finish {
@@ -401,7 +401,7 @@ impl<A: AppSpec> AppInner<A> {
         let route = cx.route;
         // WebSocket handshakes are GETs, so neither the CORS check (unsafe methods only)
         // nor CSRF stops a cross-site handshake. WebSocket routes run `Check::WsOrigin`
-        // first (listed in their contract); any other route that receives an upgrade
+        // first (listed in their contract). Any other route that receives an upgrade
         // request is checked here as a backstop (not a graph stage: only `deny.403`).
         if !route.policy.websocket && !self.ws_origin_ok(cx) {
             cx.mark(Stage::Deny(403));
