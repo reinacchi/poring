@@ -75,7 +75,7 @@ futures-util = { version = "0.3", optional = true, default-features = false, fea
 multer = { version = "3", optional = true }
 wasmtime = { version = "50.0.1", optional = true, default-features = false, features = ["runtime", "cranelift", "component-model", "std", "anyhow", "parallel-compilation"] }
 arc-swap = { workspace = true, optional = true }
-sha2 = { version = "0.10", optional = true }
+sha2 = { version = "0.11", optional = true }
 notify = { version = "8", optional = true, default-features = false }
 wat = { version = "1", optional = true }
 wit-component = { version = "0.263", optional = true }
